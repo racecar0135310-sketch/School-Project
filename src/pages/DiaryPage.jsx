@@ -277,57 +277,52 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
 
       <p
         dir="rtl"
-        className="text-center mb-4 text-slate-900 font-semibold"
-        style={{ fontSize: 28, lineHeight: 1.6 }}
+        className="text-center mb-5 text-slate-900 font-semibold"
+        style={{ fontSize: 28, lineHeight: 1.4 }}
       >
         {BISMILLAH}
       </p>
 
-      {/* Meta table */}
-      <table className="w-full border-collapse border border-slate-700 text-sm mb-3">
-        <tbody>
-          <MetaRow label1="CLASS" value1={meta.className} label2="SECTION" value2={meta.section} />
-          <MetaRow label1="DATE" value1={meta.date} label2="DAY" value2={meta.day} />
-          <tr>
-            <td className="border border-slate-700 px-2 py-1.5 text-center align-middle font-semibold bg-slate-50 w-1/4">
-              INCHARGE
-            </td>
-            <td className="border border-slate-700 px-2 py-1.5 text-center align-middle text-blue-800" colSpan={3}>
-              {meta.incharge}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      {/* Meta grid (built with plain divs, not a <table>, so html2canvas
+          exports vertical centering exactly like the live preview) */}
+      <div className="border border-slate-700 text-sm mb-3">
+        <Row>
+          <Cell bold shaded>CLASS</Cell>
+          <Cell>{meta.className}</Cell>
+          <Cell bold shaded>SECTION</Cell>
+          <Cell>{meta.section}</Cell>
+        </Row>
+        <Row noTop>
+          <Cell bold shaded>DATE</Cell>
+          <Cell className="text-blue-800">{meta.date}</Cell>
+          <Cell bold shaded>DAY</Cell>
+          <Cell className="text-blue-800">{meta.day}</Cell>
+        </Row>
+        <Row noTop>
+          <Cell bold shaded>INCHARGE</Cell>
+          <Cell grow={3} className="text-blue-800">{meta.incharge}</Cell>
+        </Row>
+      </div>
 
       <h2 className="text-center font-bold mb-2">DAILY HOME WORK DIARY</h2>
 
-      {/* Subjects table */}
-      <table className="w-full border-collapse border border-slate-700 text-sm mb-2">
-        <thead>
-          <tr className="bg-emerald-200">
-            <th className="border border-slate-700 px-2 py-1.5 w-1/4 text-center align-middle">SUBJECT</th>
-            <th className="border border-slate-700 px-2 py-1.5 text-center align-middle">DESCRIPTION</th>
-          </tr>
-        </thead>
-        <tbody>
-          {subjects.map((row) => (
-            <tr key={row.id}>
-              <td className="border border-slate-700 px-2 py-2.5 text-center font-semibold align-middle text-sky-500">
-                {row.subject || "\u00A0"}
-              </td>
-              <td className="border border-slate-700 px-2 py-2.5 text-center align-middle text-sky-500 whitespace-pre-wrap">
-                {row.description}
-              </td>
-            </tr>
-          ))}
-          <tr>
-            <td className="border border-slate-700 px-2 py-2.5 text-center font-semibold align-middle">NOTE</td>
-            <td className="border border-slate-700 px-2 py-2.5 text-center text-red-700 align-middle whitespace-pre-wrap">
-              {note}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      {/* Subjects grid */}
+      <div className="border border-slate-700 text-sm mb-2">
+        <Row className="bg-emerald-200">
+          <Cell bold>SUBJECT</Cell>
+          <Cell bold grow={3}>DESCRIPTION</Cell>
+        </Row>
+        {subjects.map((row) => (
+          <Row key={row.id} noTop tall>
+            <Cell bold className="text-sky-500">{row.subject || "\u00A0"}</Cell>
+            <Cell grow={3} wrap className="text-sky-500">{row.description}</Cell>
+          </Row>
+        ))}
+        <Row noTop tall>
+          <Cell bold>NOTE</Cell>
+          <Cell grow={3} wrap className="text-red-700">{note}</Cell>
+        </Row>
+      </div>
 
       <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-800 mt-3">
         <p>{DUROOD_1}</p>
@@ -337,13 +332,32 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
   );
 });
 
-function MetaRow({ label1, value1, label2, value2 }) {
+// A row of the grid: a flex container that stretches all its cells to equal
+// height (default flex "stretch" behavior — no percentage heights needed).
+function Row({ children, className = "", noTop, tall }) {
   return (
-    <tr>
-      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle font-semibold bg-slate-50 w-1/4">{label1}</td>
-      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle text-blue-800 w-1/4">{value1}</td>
-      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle font-semibold bg-slate-50 w-1/4">{label2}</td>
-      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle text-blue-800 w-1/4">{value2}</td>
-    </tr>
+    <div
+      className={`flex w-full ${noTop ? "border-t border-slate-700" : ""} ${
+        tall ? "min-h-[46px]" : "min-h-[34px]"
+      } ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+// A grid cell: itself a flex container (not a wrapper needing h-full), so it
+// centers its own content correctly whether rendered by the browser or by
+// html2canvas when exporting the diary as an image.
+function Cell({ bold, shaded, wrap, grow = 1, className = "", children }) {
+  return (
+    <div
+      style={{ flexGrow: grow, flexBasis: 0 }}
+      className={`flex items-center justify-center text-center border-l border-slate-700 first:border-l-0 px-2 py-1.5 ${
+        shaded ? "bg-slate-50" : ""
+      } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
+    >
+      {children}
+    </div>
   );
 }
