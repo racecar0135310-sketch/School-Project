@@ -3,6 +3,11 @@ import { Link } from "react-router-dom";
 import html2canvas from "html2canvas";
 import { loadTeachers, findTeacherByName } from "../lib/storage.js";
 
+// Logos live in /public/logos so they load with a plain, absolute path —
+// this works the same in dev, build, and preview, with no bundler import needed.
+const minhajUlQuranLogo = "/logos/minhaj-ul-quran-logo.png";
+const mesLogo = "/logos/minhaj-education-society-logo.jpg";
+
 // ---- Fixed template text (same every time, matches the school's printed diary) ----
 const SCHOOL_NAME = "Minhaj-ul-Quran Model Secondary School";
 const SCHOOL_ADDRESS = "Gulfishan Colony,Jhang Road,Faisalabad";
@@ -251,17 +256,23 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
     >
       {/* Header banner */}
       <div className="border-2 border-emerald-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#f4f8ee]">
-        <div className="w-12 h-12 rounded-full border border-slate-400 flex items-center justify-center text-[8px] text-center text-slate-500">
-          crest
-        </div>
+        <img
+          src={minhajUlQuranLogo}
+          alt="Minhaj-ul-Quran"
+          className="w-14 h-14 object-contain shrink-0"
+          crossOrigin="anonymous"
+        />
         <div className="text-center flex-1">
           <h1 className="text-emerald-900 font-bold text-xl leading-tight">{SCHOOL_NAME}</h1>
           <p className="text-[11px] text-slate-700">{SCHOOL_ADDRESS}</p>
           <p className="text-[11px] text-slate-700">{SCHOOL_PHONE}</p>
         </div>
-        <div className="w-12 h-12 rounded-full border border-slate-400 flex items-center justify-center text-[8px] text-center text-slate-500">
-          logo
-        </div>
+        <img
+          src={mesLogo}
+          alt="Minhaj Education Society"
+          className="w-14 h-14 object-contain shrink-0"
+          crossOrigin="anonymous"
+        />
       </div>
 
       <p
