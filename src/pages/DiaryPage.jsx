@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import html2canvas from "html2canvas";
 import { loadTeachers, findTeacherByName } from "../lib/storage.js";
 
+// ---- Fixed template text (same every time, matches the school's printed diary) ----
 const SCHOOL_NAME = "Minhaj-ul-Quran Model Secondary School";
 const SCHOOL_ADDRESS = "Gulfishan Colony,Jhang Road,Faisalabad";
 const SCHOOL_PHONE = "(041-265 1699-265 1290)";
@@ -45,6 +46,10 @@ export default function DiaryPage() {
 
   const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
 
+  // When the incharge name matches a saved teacher, auto-fill class, section
+  // and the subject list for that class (keeping date/day as-is, since those
+  // already default to today and the teacher may be doing a diary for
+  // another day).
   const handleInchargeChange = (value) => {
     updateMeta("incharge", value);
     const teacher = findTeacherByName(teachers, value);
@@ -71,6 +76,7 @@ export default function DiaryPage() {
   const removeSubject = (id) =>
     setSubjects((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
 
+  // "Done" -> render the diary at high resolution and save as PNG
   const handleDone = async () => {
     if (!previewRef.current) return;
     setSaving(true);
@@ -108,6 +114,7 @@ export default function DiaryPage() {
       </header>
 
       <main className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ---------------- FORM ---------------- */}
         <section className="bg-white rounded-lg shadow p-5 space-y-5">
           <div>
             <h2 className="font-semibold text-slate-800 mb-3">Diary details</h2>
@@ -208,6 +215,7 @@ export default function DiaryPage() {
           </button>
         </section>
 
+        {/* ---------------- LIVE PREVIEW ---------------- */}
         <section className="lg:sticky lg:top-4 self-start">
           <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
           <div className="overflow-auto rounded shadow border border-slate-300">
@@ -233,13 +241,15 @@ function Field({ label, value, onChange, placeholder }) {
   );
 }
 
+// The diary itself, styled to match the school's printed template.
 const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, note }, ref) {
   return (
     <div
       ref={ref}
       style={{ background: "#eef3e6", width: 560, fontFamily: "Georgia, 'Times New Roman', serif" }}
-      className="p-5 text-slate-900"
+      className="p-5 text-slate-900 border-4 border-emerald-800 rounded-md"
     >
+      {/* Header banner */}
       <div className="border-2 border-emerald-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#f4f8ee]">
         <div className="w-12 h-12 rounded-full border border-slate-400 flex items-center justify-center text-[8px] text-center text-slate-500">
           crest
@@ -254,19 +264,24 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         </div>
       </div>
 
-      <p dir="rtl" className="text-center text-lg mb-3 text-slate-800">
+      <p
+        dir="rtl"
+        className="text-center mb-4 text-slate-900 font-semibold"
+        style={{ fontSize: 28, lineHeight: 1.6 }}
+      >
         {BISMILLAH}
       </p>
 
+      {/* Meta table */}
       <table className="w-full border-collapse border border-slate-700 text-sm mb-3">
         <tbody>
           <MetaRow label1="CLASS" value1={meta.className} label2="SECTION" value2={meta.section} />
           <MetaRow label1="DATE" value1={meta.date} label2="DAY" value2={meta.day} />
           <tr>
-            <td className="border border-slate-700 px-2 py-1.5 align-middle font-semibold bg-slate-50 w-1/4">
+            <td className="border border-slate-700 px-2 py-1.5 text-center align-middle font-semibold bg-slate-50 w-1/4">
               INCHARGE
             </td>
-            <td className="border border-slate-700 px-2 py-1.5 align-middle text-blue-800" colSpan={3}>
+            <td className="border border-slate-700 px-2 py-1.5 text-center align-middle text-blue-800" colSpan={3}>
               {meta.incharge}
             </td>
           </tr>
@@ -275,27 +290,28 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
 
       <h2 className="text-center font-bold mb-2">DAILY HOME WORK DIARY</h2>
 
+      {/* Subjects table */}
       <table className="w-full border-collapse border border-slate-700 text-sm mb-2">
         <thead>
           <tr className="bg-emerald-200">
-            <th className="border border-slate-700 px-2 py-1.5 w-1/4 text-left align-middle">SUBJECT</th>
-            <th className="border border-slate-700 px-2 py-1.5 text-left align-middle">DESCRIPTION</th>
+            <th className="border border-slate-700 px-2 py-1.5 w-1/4 text-center align-middle">SUBJECT</th>
+            <th className="border border-slate-700 px-2 py-1.5 text-center align-middle">DESCRIPTION</th>
           </tr>
         </thead>
         <tbody>
           {subjects.map((row) => (
             <tr key={row.id}>
-              <td className="border border-slate-700 px-2 py-2.5 font-semibold align-middle text-sky-500">
+              <td className="border border-slate-700 px-2 py-2.5 text-center font-semibold align-middle text-sky-500">
                 {row.subject || "\u00A0"}
               </td>
-              <td className="border border-slate-700 px-2 py-2.5 align-middle text-sky-500 whitespace-pre-wrap">
+              <td className="border border-slate-700 px-2 py-2.5 text-center align-middle text-sky-500 whitespace-pre-wrap">
                 {row.description}
               </td>
             </tr>
           ))}
           <tr>
-            <td className="border border-slate-700 px-2 py-2.5 font-semibold align-middle">NOTE</td>
-            <td className="border border-slate-700 px-2 py-2.5 text-red-700 align-middle whitespace-pre-wrap">
+            <td className="border border-slate-700 px-2 py-2.5 text-center font-semibold align-middle">NOTE</td>
+            <td className="border border-slate-700 px-2 py-2.5 text-center text-red-700 align-middle whitespace-pre-wrap">
               {note}
             </td>
           </tr>
@@ -313,10 +329,10 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
 function MetaRow({ label1, value1, label2, value2 }) {
   return (
     <tr>
-      <td className="border border-slate-700 px-2 py-1.5 align-middle font-semibold bg-slate-50 w-1/4">{label1}</td>
-      <td className="border border-slate-700 px-2 py-1.5 align-middle text-blue-800 w-1/4">{value1}</td>
-      <td className="border border-slate-700 px-2 py-1.5 align-middle font-semibold bg-slate-50 w-1/4">{label2}</td>
-      <td className="border border-slate-700 px-2 py-1.5 align-middle text-blue-800 w-1/4">{value2}</td>
+      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle font-semibold bg-slate-50 w-1/4">{label1}</td>
+      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle text-blue-800 w-1/4">{value1}</td>
+      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle font-semibold bg-slate-50 w-1/4">{label2}</td>
+      <td className="border border-slate-700 px-2 py-1.5 text-center align-middle text-blue-800 w-1/4">{value2}</td>
     </tr>
   );
 }
