@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import html2canvas from "html2canvas";
 import { loadTeachers, findTeacherByName } from "../lib/storage.js";
 
-// ---- Fixed template text (same every time, matches the school's printed diary) ----
 const SCHOOL_NAME = "Minhaj-ul-Quran Model Secondary School";
 const SCHOOL_ADDRESS = "Gulfishan Colony,Jhang Road,Faisalabad";
 const SCHOOL_PHONE = "(041-265 1699-265 1290)";
@@ -46,10 +45,6 @@ export default function DiaryPage() {
 
   const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
 
-  // When the incharge name matches a saved teacher, auto-fill class, section
-  // and the subject list for that class (keeping date/day as-is, since those
-  // already default to today and the teacher may be doing a diary for
-  // another day).
   const handleInchargeChange = (value) => {
     updateMeta("incharge", value);
     const teacher = findTeacherByName(teachers, value);
@@ -76,7 +71,6 @@ export default function DiaryPage() {
   const removeSubject = (id) =>
     setSubjects((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
 
-  // "Done" -> render the diary at high resolution and save as PNG
   const handleDone = async () => {
     if (!previewRef.current) return;
     setSaving(true);
@@ -114,7 +108,6 @@ export default function DiaryPage() {
       </header>
 
       <main className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* ---------------- FORM ---------------- */}
         <section className="bg-white rounded-lg shadow p-5 space-y-5">
           <div>
             <h2 className="font-semibold text-slate-800 mb-3">Diary details</h2>
@@ -215,7 +208,6 @@ export default function DiaryPage() {
           </button>
         </section>
 
-        {/* ---------------- LIVE PREVIEW ---------------- */}
         <section className="lg:sticky lg:top-4 self-start">
           <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
           <div className="overflow-auto rounded shadow border border-slate-300">
@@ -241,7 +233,6 @@ function Field({ label, value, onChange, placeholder }) {
   );
 }
 
-// The diary itself, styled to match the school's printed template.
 const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, note }, ref) {
   return (
     <div
@@ -249,7 +240,6 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
       style={{ background: "#eef3e6", width: 560, fontFamily: "Georgia, 'Times New Roman', serif" }}
       className="p-5 text-slate-900"
     >
-      {/* Header banner */}
       <div className="border-2 border-emerald-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#f4f8ee]">
         <div className="w-12 h-12 rounded-full border border-slate-400 flex items-center justify-center text-[8px] text-center text-slate-500">
           crest
@@ -268,7 +258,6 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         {BISMILLAH}
       </p>
 
-      {/* Meta table */}
       <table className="w-full border-collapse border border-slate-700 text-sm mb-3">
         <tbody>
           <MetaRow label1="CLASS" value1={meta.className} label2="SECTION" value2={meta.section} />
@@ -286,7 +275,6 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
 
       <h2 className="text-center font-bold mb-2">DAILY HOME WORK DIARY</h2>
 
-      {/* Subjects table */}
       <table className="w-full border-collapse border border-slate-700 text-sm mb-2">
         <thead>
           <tr className="bg-emerald-200">
