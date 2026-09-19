@@ -1,25 +1,33 @@
-import dns from 'node:dns';
-dns.setServers(['8.8.8.8', '8.8.4.4']); // Google's Public DNS
-import 'dotenv/config'; // This automatically loads your .env file
+import 'dotenv/config';
 import { MongoClient } from 'mongodb';
 
 const uri = process.env.MONGODB_URI;
-const client = new MongoClient(uri);
+
+if (!uri) {
+  console.error("❌ MONGODB_URI is not defined in your .env file!");
+  process.exit(1);
+}
+
+const client = new MongoClient(uri, {
+  serverSelectionTimeoutMS: 5000,
+});
 
 async function run() {
   try {
+    console.log("⏳ Connecting to MongoDB...");
     await client.connect();
     console.log("✅ Successfully connected to MongoDB Atlas!");
-    
-    // Test a simple ping
+
     await client.db("admin").command({ ping: 1 });
-    console.log("✅ Pinged your deployment. You are connected!");
-    
+    console.log("✅ Ping succeeded. Database is reachable!");
+
   } catch (error) {
-    console.error("❌ Connection failed:", error);
-    console.log("\n💡 TIP: If you see 'querySrv ECONNREFUSED', you need to change your Windows DNS to 8.8.8.8");
+    console.error("\n❌ Connection failed!");
+    console.error("Error name:", error.name);
+    console.error("Error message:", error.message);
   } finally {
     await client.close();
+    console.log("🔌 Connection closed.");
   }
 }
 
