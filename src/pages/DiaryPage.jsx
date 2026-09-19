@@ -108,7 +108,7 @@ export default function DiaryPage() {
       // what's on screen, unlike html2canvas.
       const dataUrl = await toPng(previewRef.current, {
         pixelRatio: 3,
-        backgroundColor: "#e6f2fb",
+        backgroundColor: "#0b2545",
         cacheBust: true,
       });
       const link = document.createElement("a");
@@ -338,20 +338,20 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
   return (
     <div
       ref={ref}
-      style={{ background: "#e6f2fb", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
-      className="p-5 text-slate-900 border-4 border-blue-800 rounded-md"
+      style={{ background: "#0b2545", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
+      className="p-5 text-slate-100 border-4 border-sky-400 rounded-md"
     >
       {/* Header banner */}
-      <div className="border-2 border-blue-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#d6ebfa]">
+      <div className="border-2 border-sky-400 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#123a67]">
         <img
           src={minhajUlQuranLogo}
           alt="Minhaj-ul-Quran"
           className="w-14 h-14 object-contain shrink-0"
         />
         <div className="text-center flex-1">
-          <h1 className="text-blue-900 font-bold text-xl leading-tight">{SCHOOL_NAME}</h1>
-          <p className="text-[11px] text-slate-700">{SCHOOL_ADDRESS}</p>
-          <p className="text-[11px] text-slate-700">{SCHOOL_PHONE}</p>
+          <h1 className="text-white font-bold text-xl leading-tight">{SCHOOL_NAME}</h1>
+          <p className="text-[11px] text-sky-100">{SCHOOL_ADDRESS}</p>
+          <p className="text-[11px] text-sky-100">{SCHOOL_PHONE}</p>
         </div>
         <img
           src={mesLogo}
@@ -362,7 +362,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
 
       <p
         dir="rtl"
-        className="text-center mb-5 text-slate-900 font-semibold"
+        className="text-center mb-5 text-slate-100 font-semibold"
         style={{ fontSize: 28, lineHeight: 1.4 }}
       >
         {BISMILLAH}
@@ -373,7 +373,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           long a label's text is (this is what previously let "INCHARGE"
           push its row's boxes wider than the CLASS/DATE rows above it). */}
       <div
-        className="border border-slate-700 text-sm mb-3"
+        className="border border-sky-700 text-sm mb-3"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
         <GridCell bold shaded borderR borderB>CLASS</GridCell>
@@ -382,43 +382,43 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         <GridCell borderB>{meta.section}</GridCell>
 
         <GridCell bold shaded borderR borderB>DATE</GridCell>
-        <GridCell borderR borderB className="text-blue-800">{meta.date}</GridCell>
+        <GridCell borderR borderB className="text-sky-300">{meta.date}</GridCell>
         <GridCell bold shaded borderR borderB>DAY</GridCell>
-        <GridCell borderB className="text-blue-800">{meta.day}</GridCell>
+        <GridCell borderB className="text-sky-300">{meta.day}</GridCell>
 
         <GridCell bold shaded borderR>INCHARGE</GridCell>
-        <GridCell className="text-blue-800">{meta.incharge}</GridCell>
+        <GridCell className="text-sky-300">{meta.incharge}</GridCell>
         <div />
         <div />
       </div>
 
-      <h2 className="text-center font-bold mb-2">DAILY HOME WORK DIARY</h2>
+      <h2 className="text-center font-bold mb-2 text-white">DAILY HOME WORK DIARY</h2>
 
       {/* Subjects grid — same shared-grid approach, 4 columns, with the
           description column spanning the remaining 3. */}
       <div
-        className="border border-slate-700 text-sm mb-2"
+        className="border border-sky-700 text-sm mb-2"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
-        <GridCell bold borderR borderB className="bg-blue-200">SUBJECT</GridCell>
-        <GridCell bold borderB span={3} className="bg-blue-200">DESCRIPTION</GridCell>
+        <GridCell bold borderR borderB className="bg-sky-700 text-white">SUBJECT</GridCell>
+        <GridCell bold borderB span={3} className="bg-sky-700 text-white">DESCRIPTION</GridCell>
 
         {subjects.map((row) => (
           <React.Fragment key={row.id}>
-            <GridCell bold borderR borderB tall className="text-slate-700">
+            <GridCell bold borderR borderB tall className="text-slate-100">
               {row.subject || "\u00A0"}
             </GridCell>
-            <GridCell borderB span={3} tall wrap className="text-slate-700">
+            <GridCell borderB span={3} tall wrap className="text-slate-100">
               {row.description}
             </GridCell>
           </React.Fragment>
         ))}
 
         <GridCell bold borderR tall>NOTE</GridCell>
-        <GridCell span={3} tall wrap className="text-red-700">{note}</GridCell>
+        <GridCell span={3} tall wrap className="text-red-300">{note}</GridCell>
       </div>
 
-      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-800 mt-3">
+      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-200 mt-3">
         <p>{DUROOD_1}</p>
         <p>{DUROOD_2}</p>
       </div>
@@ -436,8 +436,8 @@ function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, classN
       style={{ gridColumn: `span ${span}` }}
       className={`flex items-center justify-center text-center px-2 ${
         tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
-      } ${borderR ? "border-r border-slate-700" : ""} ${borderB ? "border-b border-slate-700" : ""} ${
-        shaded ? "bg-slate-50" : ""
+      } ${borderR ? "border-r border-sky-700" : ""} ${borderB ? "border-b border-sky-700" : ""} ${
+        shaded ? "bg-[#173f6c] text-white" : ""
       } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
     >
       {children}
