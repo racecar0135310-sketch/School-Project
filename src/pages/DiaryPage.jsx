@@ -9,7 +9,7 @@ const DIARY_SESSION_KEY = "diary-access-granted";
 // Logos live in /public/logos so they load with a plain, absolute path —
 // this works the same in dev, build, and preview, with no bundler import needed.
 const minhajUlQuranLogo = "/logos/minhaj-ul-quran-logo.png";
-const mesLogo = "/logos/minhaj-education-society-logo.jpg";
+const mesLogo = "/logos/minhaj-education-society-logo.png";
 
 // ---- Fixed template text (same every time, matches the school's printed diary) ----
 const SCHOOL_NAME = "Minhaj-ul-Quran Model Secondary School";
@@ -108,7 +108,7 @@ export default function DiaryPage() {
       // what's on screen, unlike html2canvas.
       const dataUrl = await toPng(previewRef.current, {
         pixelRatio: 3,
-        backgroundColor: "#eef3e6",
+        backgroundColor: "#e6f2fb",
         cacheBust: true,
       });
       const link = document.createElement("a");
@@ -338,18 +338,18 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
   return (
     <div
       ref={ref}
-      style={{ background: "#eef3e6", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
-      className="p-5 text-slate-900 border-4 border-emerald-800 rounded-md"
+      style={{ background: "#e6f2fb", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
+      className="p-5 text-slate-900 border-4 border-blue-800 rounded-md"
     >
       {/* Header banner */}
-      <div className="border-2 border-emerald-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#f4f8ee]">
+      <div className="border-2 border-blue-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#d6ebfa]">
         <img
           src={minhajUlQuranLogo}
           alt="Minhaj-ul-Quran"
           className="w-14 h-14 object-contain shrink-0"
         />
         <div className="text-center flex-1">
-          <h1 className="text-emerald-900 font-bold text-xl leading-tight">{SCHOOL_NAME}</h1>
+          <h1 className="text-blue-900 font-bold text-xl leading-tight">{SCHOOL_NAME}</h1>
           <p className="text-[11px] text-slate-700">{SCHOOL_ADDRESS}</p>
           <p className="text-[11px] text-slate-700">{SCHOOL_PHONE}</p>
         </div>
@@ -400,15 +400,15 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         className="border border-slate-700 text-sm mb-2"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
-        <GridCell bold borderR borderB className="bg-emerald-200">SUBJECT</GridCell>
-        <GridCell bold borderB span={3} className="bg-emerald-200">DESCRIPTION</GridCell>
+        <GridCell bold borderR borderB className="bg-blue-200">SUBJECT</GridCell>
+        <GridCell bold borderB span={3} className="bg-blue-200">DESCRIPTION</GridCell>
 
         {subjects.map((row) => (
           <React.Fragment key={row.id}>
-            <GridCell bold borderR borderB tall className="text-sky-500">
+            <GridCell bold borderR borderB tall className="text-slate-700">
               {row.subject || "\u00A0"}
             </GridCell>
-            <GridCell borderB span={3} tall wrap className="text-sky-500">
+            <GridCell borderB span={3} tall wrap className="text-slate-700">
               {row.description}
             </GridCell>
           </React.Fragment>
