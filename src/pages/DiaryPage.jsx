@@ -18,6 +18,11 @@ const DUROOD_1 =
 const DUROOD_2 =
   "اَللّٰهُمَّ بَارِکْ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا بَارَکْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
 
+// The diary is always laid out at this pixel width internally, so the
+// downloaded image is identical quality no matter what device generated it.
+// On screen it's scaled down to fit — see ResponsiveDiaryFrame below.
+const DIARY_WIDTH = 560;
+
 function todayFormatted() {
   const d = new Date();
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
@@ -43,6 +48,9 @@ export default function DiaryPage() {
   const [saving, setSaving] = useState(false);
   const [matched, setMatched] = useState(false);
 
+  // previewRef points at a full-size (560px), off-screen copy of the diary —
+  // this is what actually gets captured for the download, always at full
+  // resolution regardless of the visitor's screen size.
   const previewRef = useRef(null);
 
   useEffect(() => {
@@ -81,7 +89,9 @@ export default function DiaryPage() {
   const removeSubject = (id) =>
     setSubjects((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
 
-  // "Done" -> render the diary at high resolution and save as PNG
+  // "Done" -> render the diary at high resolution and save as PNG. This
+  // always captures the full-size (unscaled) off-screen copy, so the file
+  // comes out identical whether triggered from a phone or a desktop.
   const handleDone = async () => {
     if (!previewRef.current) return;
     setSaving(true);
@@ -103,24 +113,24 @@ export default function DiaryPage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <header className="bg-emerald-800 text-white py-4 px-6 shadow flex items-center justify-between">
+      <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">Daily Home Work Diary — Generator</h1>
-          <p className="text-sm text-emerald-100">
+          <h1 className="text-base sm:text-lg font-semibold">Daily Home Work Diary — Generator</h1>
+          <p className="text-xs sm:text-sm text-emerald-100">
             Type your name in Incharge to auto-fill your class, then add each subject's homework.
           </p>
         </div>
         <Link
           to="/admin"
-          className="bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
+          className="self-start sm:self-auto bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
         >
           Admin portal
         </Link>
       </header>
 
-      <main className="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <main className="max-w-6xl mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* ---------------- FORM ---------------- */}
-        <section className="bg-white rounded-lg shadow p-5 space-y-5">
+        <section className="bg-white rounded-lg shadow p-4 sm:p-5 space-y-5">
           <div>
             <h2 className="font-semibold text-slate-800 mb-3">Diary details</h2>
             <div className="grid grid-cols-2 gap-3">
@@ -220,14 +230,72 @@ export default function DiaryPage() {
           </button>
         </section>
 
-        {/* ---------------- LIVE PREVIEW ---------------- */}
+        {/* ---------------- LIVE PREVIEW (responsive on-screen copy) ---------------- */}
         <section className="lg:sticky lg:top-4 self-start">
           <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
-          <div className="overflow-auto rounded shadow border border-slate-300">
-            <DiaryPreview ref={previewRef} meta={meta} subjects={subjects} note={note} />
-          </div>
+          <ResponsiveDiaryFrame>
+            <DiaryPreview meta={meta} subjects={subjects} note={note} />
+          </ResponsiveDiaryFrame>
         </section>
+
+        {/* Full-size, off-screen copy used only for the image export — always
+            renders at DIARY_WIDTH regardless of the viewer's screen size, so
+            the downloaded PNG is identical quality on phone or desktop. */}
+        <div
+          aria-hidden="true"
+          style={{ position: "absolute", top: 0, left: -99999, pointerEvents: "none" }}
+        >
+          <DiaryPreview ref={previewRef} meta={meta} subjects={subjects} note={note} />
+        </div>
       </main>
+    </div>
+  );
+}
+
+// Scales its child (assumed to be DIARY_WIDTH px wide) down to fit whatever
+// width is available — phone, tablet, or desktop — using a CSS transform, so
+// the diary is always fully visible on screen with no horizontal scrolling.
+// The child's own layout size never changes, only how it's painted, so this
+// has no effect on the separate full-size copy used for the actual download.
+function ResponsiveDiaryFrame({ children }) {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [height, setHeight] = useState(null);
+
+  useEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+
+    const update = () => {
+      const containerWidth = outer.offsetWidth;
+      const naturalHeight = inner.offsetHeight;
+      if (!containerWidth || !naturalHeight) return;
+      const nextScale = Math.min(containerWidth / DIARY_WIDTH, 1);
+      setScale(nextScale);
+      setHeight(naturalHeight * nextScale);
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(outer);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  });
+
+  return (
+    <div
+      ref={outerRef}
+      className="w-full overflow-hidden rounded shadow border border-slate-300"
+      style={{ height: height ?? undefined }}
+    >
+      <div
+        ref={innerRef}
+        style={{ width: DIARY_WIDTH, transform: `scale(${scale})`, transformOrigin: "top left" }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -251,7 +319,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
   return (
     <div
       ref={ref}
-      style={{ background: "#eef3e6", width: 560, fontFamily: "Georgia, 'Times New Roman', serif" }}
+      style={{ background: "#eef3e6", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
       className="p-5 text-slate-900 border-4 border-emerald-800 rounded-md"
     >
       {/* Header banner */}

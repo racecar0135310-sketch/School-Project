@@ -76,23 +76,23 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <header className="bg-emerald-800 text-white py-4 px-6 shadow flex items-center justify-between">
+      <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">Admin — Class Incharges</h1>
-          <p className="text-sm text-emerald-100">
+          <h1 className="text-base sm:text-lg font-semibold">Admin — Class Incharges</h1>
+          <p className="text-xs sm:text-sm text-emerald-100">
             Add each teacher once with their class, section and subjects. The
             diary page will auto-fill this when the teacher types their name.
           </p>
         </div>
         <Link
           to="/"
-          className="bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
+          className="self-start sm:self-auto bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
         >
           ← Back to diary
         </Link>
       </header>
 
-      <main className="max-w-3xl mx-auto p-4 space-y-6">
+      <main className="max-w-3xl mx-auto p-3 sm:p-4 space-y-6">
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-5 space-y-3">
           <h2 className="font-semibold text-slate-800">
             {editingId ? "Edit incharge" : "Add a new incharge"}
