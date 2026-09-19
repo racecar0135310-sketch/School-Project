@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { loadTeachers, saveTeachers } from "../lib/storage.js";
+import AccessGate from "../components/AccessGate.jsx";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
+const ADMIN_PASSWORD = "Mutahhar@135";
+const ADMIN_SESSION_KEY = "admin-access-granted";
 
 export default function AdminPage() {
+  const [unlocked, setUnlocked] = useState(
+    () => sessionStorage.getItem(ADMIN_SESSION_KEY) === "true"
+  );
   const [teachers, setTeachers] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -73,6 +79,21 @@ export default function AdminPage() {
     persist(teachers.filter((t) => t.id !== id));
     if (editingId === id) resetForm();
   };
+
+  if (!unlocked) {
+    return (
+      <AccessGate
+        title="Admin Portal"
+        subtitle="Enter the admin password to continue."
+        expected={ADMIN_PASSWORD}
+        placeholder="Enter password"
+        onSuccess={() => {
+          sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
+          setUnlocked(true);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100">

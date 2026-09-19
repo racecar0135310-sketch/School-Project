@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import html2canvas from "html2canvas";
+import { toPng } from "html-to-image";
 import { loadTeachers, findTeacherByName } from "../lib/storage.js";
+import AccessGate from "../components/AccessGate.jsx";
+
+const DIARY_ACCESS_CODE = "135135";
+const DIARY_SESSION_KEY = "diary-access-granted";
 
 // Logos live in /public/logos so they load with a plain, absolute path —
 // this works the same in dev, build, and preview, with no bundler import needed.
@@ -35,6 +38,9 @@ let idCounter = 1;
 const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
 
 export default function DiaryPage() {
+  const [unlocked, setUnlocked] = useState(
+    () => sessionStorage.getItem(DIARY_SESSION_KEY) === "true"
+  );
   const [teachers, setTeachers] = useState([]);
   const [meta, setMeta] = useState({
     className: "",
@@ -96,20 +102,39 @@ export default function DiaryPage() {
     if (!previewRef.current) return;
     setSaving(true);
     try {
-      const canvas = await html2canvas(previewRef.current, {
-        scale: 3,
+      // html-to-image renders through the browser's own engine (via an SVG
+      // <foreignObject>), so the PNG comes out pixel-identical to the live
+      // preview — no separate text/layout re-implementation to disagree with
+      // what's on screen, unlike html2canvas.
+      const dataUrl = await toPng(previewRef.current, {
+        pixelRatio: 3,
         backgroundColor: "#eef3e6",
-        useCORS: true,
+        cacheBust: true,
       });
       const link = document.createElement("a");
       const fileDate = meta.date.replace(/\//g, "-") || "diary";
       link.download = `homework-diary-${meta.className || "class"}-${fileDate}.png`;
-      link.href = canvas.toDataURL("image/png");
+      link.href = dataUrl;
       link.click();
     } finally {
       setSaving(false);
     }
   };
+
+  if (!unlocked) {
+    return (
+      <AccessGate
+        title="Daily Home Work Diary"
+        subtitle="Enter the access code to continue."
+        expected={DIARY_ACCESS_CODE}
+        placeholder="Enter code"
+        onSuccess={() => {
+          sessionStorage.setItem(DIARY_SESSION_KEY, "true");
+          setUnlocked(true);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -120,12 +145,6 @@ export default function DiaryPage() {
             Type your name in Incharge to auto-fill your class, then add each subject's homework.
           </p>
         </div>
-        <Link
-          to="/admin"
-          className="self-start sm:self-auto bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
-        >
-          Admin portal
-        </Link>
       </header>
 
       <main className="max-w-6xl mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
@@ -328,7 +347,6 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           src={minhajUlQuranLogo}
           alt="Minhaj-ul-Quran"
           className="w-14 h-14 object-contain shrink-0"
-          crossOrigin="anonymous"
         />
         <div className="text-center flex-1">
           <h1 className="text-emerald-900 font-bold text-xl leading-tight">{SCHOOL_NAME}</h1>
@@ -339,7 +357,6 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           src={mesLogo}
           alt="Minhaj Education Society"
           className="w-14 h-14 object-contain shrink-0"
-          crossOrigin="anonymous"
         />
       </div>
 
