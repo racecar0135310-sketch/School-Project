@@ -368,46 +368,54 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         {BISMILLAH}
       </p>
 
-      {/* Meta grid (built with plain divs, not a <table>, so html2canvas
-          exports vertical centering exactly like the live preview) */}
-      <div className="border border-slate-700 text-sm mb-3">
-        <Row>
-          <Cell bold shaded>CLASS</Cell>
-          <Cell>{meta.className}</Cell>
-          <Cell bold shaded>SECTION</Cell>
-          <Cell>{meta.section}</Cell>
-        </Row>
-        <Row noTop>
-          <Cell bold shaded>DATE</Cell>
-          <Cell className="text-blue-800">{meta.date}</Cell>
-          <Cell bold shaded>DAY</Cell>
-          <Cell className="text-blue-800">{meta.day}</Cell>
-        </Row>
-        <Row noTop>
-          <Cell bold shaded>INCHARGE</Cell>
-          <Cell className="text-blue-800">{meta.incharge}</Cell>
-          <div style={{ flexGrow: 2, flexBasis: 0 }} />
-        </Row>
+      {/* Meta grid — one shared CSS Grid (not separate flex rows per line),
+          so all four columns are locked to identical widths no matter how
+          long a label's text is (this is what previously let "INCHARGE"
+          push its row's boxes wider than the CLASS/DATE rows above it). */}
+      <div
+        className="border border-slate-700 text-sm mb-3"
+        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+      >
+        <GridCell bold shaded borderR borderB>CLASS</GridCell>
+        <GridCell borderR borderB>{meta.className}</GridCell>
+        <GridCell bold shaded borderR borderB>SECTION</GridCell>
+        <GridCell borderB>{meta.section}</GridCell>
+
+        <GridCell bold shaded borderR borderB>DATE</GridCell>
+        <GridCell borderR borderB className="text-blue-800">{meta.date}</GridCell>
+        <GridCell bold shaded borderR borderB>DAY</GridCell>
+        <GridCell borderB className="text-blue-800">{meta.day}</GridCell>
+
+        <GridCell bold shaded borderR>INCHARGE</GridCell>
+        <GridCell className="text-blue-800">{meta.incharge}</GridCell>
+        <div />
+        <div />
       </div>
 
       <h2 className="text-center font-bold mb-2">DAILY HOME WORK DIARY</h2>
 
-      {/* Subjects grid */}
-      <div className="border border-slate-700 text-sm mb-2">
-        <Row className="bg-emerald-200">
-          <Cell bold>SUBJECT</Cell>
-          <Cell bold grow={3}>DESCRIPTION</Cell>
-        </Row>
+      {/* Subjects grid — same shared-grid approach, 4 columns, with the
+          description column spanning the remaining 3. */}
+      <div
+        className="border border-slate-700 text-sm mb-2"
+        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+      >
+        <GridCell bold borderR borderB className="bg-emerald-200">SUBJECT</GridCell>
+        <GridCell bold borderB span={3} className="bg-emerald-200">DESCRIPTION</GridCell>
+
         {subjects.map((row) => (
-          <Row key={row.id} noTop tall>
-            <Cell bold className="text-sky-500">{row.subject || "\u00A0"}</Cell>
-            <Cell grow={3} wrap className="text-sky-500">{row.description}</Cell>
-          </Row>
+          <React.Fragment key={row.id}>
+            <GridCell bold borderR borderB tall className="text-sky-500">
+              {row.subject || "\u00A0"}
+            </GridCell>
+            <GridCell borderB span={3} tall wrap className="text-sky-500">
+              {row.description}
+            </GridCell>
+          </React.Fragment>
         ))}
-        <Row noTop tall>
-          <Cell bold>NOTE</Cell>
-          <Cell grow={3} wrap className="text-red-700">{note}</Cell>
-        </Row>
+
+        <GridCell bold borderR tall>NOTE</GridCell>
+        <GridCell span={3} tall wrap className="text-red-700">{note}</GridCell>
       </div>
 
       <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-800 mt-3">
@@ -418,28 +426,17 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
   );
 });
 
-// A row of the grid: a flex container that stretches all its cells to equal
-// height (default flex "stretch" behavior — no percentage heights needed).
-function Row({ children, className = "", noTop, tall }) {
+// One cell of the shared CSS Grid. Border sides are passed explicitly
+// (rather than derived from position) since that's simplest and safest with
+// spanning cells. Being a flex container itself (not needing a parent's
+// height as a percentage) keeps vertical centering correct on export too.
+function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, className = "", children }) {
   return (
     <div
-      className={`flex w-full ${noTop ? "border-t border-slate-700" : ""} ${
-        tall ? "min-h-[46px]" : "min-h-[34px]"
-      } ${className}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-// A grid cell: itself a flex container (not a wrapper needing h-full), so it
-// centers its own content correctly whether rendered by the browser or by
-// html2canvas when exporting the diary as an image.
-function Cell({ bold, shaded, wrap, grow = 1, className = "", children }) {
-  return (
-    <div
-      style={{ flexGrow: grow, flexBasis: 0 }}
-      className={`flex items-center justify-center text-center border-l border-slate-700 first:border-l-0 px-2 py-1.5 ${
+      style={{ gridColumn: `span ${span}` }}
+      className={`flex items-center justify-center text-center px-2 ${
+        tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
+      } ${borderR ? "border-r border-slate-700" : ""} ${borderB ? "border-b border-slate-700" : ""} ${
         shaded ? "bg-slate-50" : ""
       } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
     >
