@@ -385,7 +385,8 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         </Row>
         <Row noTop>
           <Cell bold shaded>INCHARGE</Cell>
-          <Cell grow={3} className="text-blue-800">{meta.incharge}</Cell>
+          <Cell className="text-blue-800">{meta.incharge}</Cell>
+          <div style={{ flexGrow: 2, flexBasis: 0 }} />
         </Row>
       </div>
 
