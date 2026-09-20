@@ -1,26 +1,35 @@
 import React, { useState } from "react";
 
-// A simple lock screen: the child page is only rendered after the visitor
-// enters the expected code/password. This is client-side only (there's no
-// backend), so it's meant to keep casual/unintended visitors out — such as
-// students landing on the admin page — not to protect sensitive data.
+// A simple lock screen: the child page only renders after the visitor
+// enters the right code/password. `onVerify` does the actual checking —
+// normally an API call to the server, so the real code/password never sits
+// inside the JS bundle where anyone could read it.
 export default function AccessGate({
   title,
   subtitle,
-  expected,
+  onVerify,
   placeholder = "Enter password",
   onSuccess,
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState(false);
+  const [checking, setChecking] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (value === expected) {
-      setError(false);
-      onSuccess();
-    } else {
+    setChecking(true);
+    setError(false);
+    try {
+      const ok = await onVerify(value);
+      if (ok) {
+        onSuccess();
+      } else {
+        setError(true);
+      }
+    } catch (err) {
       setError(true);
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -56,9 +65,10 @@ export default function AccessGate({
         )}
         <button
           type="submit"
-          className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-medium rounded-md py-2 text-sm"
+          disabled={checking}
+          className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-medium rounded-md py-2 text-sm"
         >
-          Continue
+          {checking ? "Checking…" : "Continue"}
         </button>
       </form>
     </div>

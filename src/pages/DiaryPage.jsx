@@ -1,20 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { toPng } from "html-to-image";
-import { loadTeachers, findTeacherByName } from "../lib/storage.js";
+import { Link, useParams } from "react-router-dom";
+import html2canvas from "html2canvas";
+import { getSchool, loadTeachers, findTeacherByName, verifySchoolCode } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 
-const DIARY_ACCESS_CODE = "135135";
-const DIARY_SESSION_KEY = "diary-access-granted";
-
-// Logos live in /public/logos so they load with a plain, absolute path —
-// this works the same in dev, build, and preview, with no bundler import needed.
-const minhajUlQuranLogo = "/logos/minhaj-ul-quran-logo.png";
-const mesLogo = "/logos/minhaj-education-society-logo.png";
-
-// ---- Fixed template text (same every time, matches the school's printed diary) ----
-const SCHOOL_NAME = "Minhaj-ul-Quran Model Secondary School";
-const SCHOOL_ADDRESS = "Gulfishan Colony,Jhang Road,Faisalabad";
-const SCHOOL_PHONE = "(041-265 1699-265 1290)";
+// Fixed across every school — this dua text doesn't change per school.
 const BISMILLAH = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
 const DUROOD_1 =
   "اَللّٰهُمَّ صَلِّ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا صَلَّیْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
@@ -23,7 +13,6 @@ const DUROOD_2 =
 
 // The diary is always laid out at this pixel width internally, so the
 // downloaded image is identical quality no matter what device generated it.
-// On screen it's scaled down to fit — see ResponsiveDiaryFrame below.
 const DIARY_WIDTH = 560;
 
 function todayFormatted() {
@@ -38,9 +27,31 @@ let idCounter = 1;
 const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
 
 export default function DiaryPage() {
-  const [unlocked, setUnlocked] = useState(
-    () => sessionStorage.getItem(DIARY_SESSION_KEY) === "true"
-  );
+  const { slug } = useParams();
+  const sessionKey = `diary-access-${slug}`;
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(sessionKey) === "true");
+
+  if (!unlocked) {
+    return (
+      <AccessGate
+        title="Enter Access Code"
+        subtitle="Ask your school admin for this code."
+        placeholder="Enter code"
+        onVerify={(code) => verifySchoolCode(slug, code)}
+        onSuccess={() => {
+          sessionStorage.setItem(sessionKey, "true");
+          setUnlocked(true);
+        }}
+      />
+    );
+  }
+
+  return <DiaryEditor slug={slug} />;
+}
+
+function DiaryEditor({ slug }) {
+  const [school, setSchool] = useState(null);
+  const [schoolError, setSchoolError] = useState("");
   const [teachers, setTeachers] = useState([]);
   const [meta, setMeta] = useState({
     className: "",
@@ -54,41 +65,55 @@ export default function DiaryPage() {
   const [saving, setSaving] = useState(false);
   const [matched, setMatched] = useState(false);
 
-  // previewRef points at a full-size (560px), off-screen copy of the diary —
-  // this is what actually gets captured for the download, always at full
-  // resolution regardless of the visitor's screen size.
+  // previewRef is the ONE diary element — both what's shown on screen
+  // (scaled to fit) and what gets captured for the download (at full size,
+  // by briefly removing the scale right before capture). Using a single
+  // element avoids an html2canvas quirk where an off-screen duplicate
+  // renders its flexbox centering incorrectly.
   const previewRef = useRef(null);
+  const outerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [frameHeight, setFrameHeight] = useState(null);
 
   useEffect(() => {
-    let cancelled = false;
-    loadTeachers()
-      .then((list) => {
-        if (!cancelled) setTeachers(list);
-      })
-      .catch(() => {
-        // If the API is briefly unreachable, the incharge dropdown just
-        // won't auto-fill — the rest of the diary still works manually.
-      });
-    return () => {
-      cancelled = true;
+    getSchool(slug)
+      .then(setSchool)
+      .catch(() => setSchoolError("Couldn't load this school's details."));
+    loadTeachers(slug)
+      .then(setTeachers)
+      .catch(() => {});
+  }, [slug]);
+
+  useEffect(() => {
+    const outer = outerRef.current;
+    const inner = previewRef.current;
+    if (!outer || !inner) return;
+
+    const update = () => {
+      const containerWidth = outer.offsetWidth;
+      const naturalHeight = inner.offsetHeight; // unaffected by transform
+      if (!containerWidth || !naturalHeight) return;
+      const nextScale = Math.min(containerWidth / DIARY_WIDTH, 1);
+      setScale(nextScale);
+      setFrameHeight(naturalHeight * nextScale);
     };
-  }, []);
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(outer);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  });
 
   const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
 
-  // When the incharge name matches a saved teacher, auto-fill class, section
-  // and the subject list for that class (keeping date/day as-is, since those
-  // already default to today and the teacher may be doing a diary for
-  // another day).
   const handleInchargeChange = (value) => {
     updateMeta("incharge", value);
     const teacher = findTeacherByName(teachers, value);
     if (teacher) {
       setMeta((m) => ({ ...m, className: teacher.className, section: teacher.section }));
       setSubjects(
-        teacher.subjects.length
-          ? teacher.subjects.map((s) => newSubjectRow(s))
-          : [newSubjectRow()]
+        teacher.subjects.length ? teacher.subjects.map((s) => newSubjectRow(s)) : [newSubjectRow()]
       );
       setMatched(true);
     } else {
@@ -97,61 +122,48 @@ export default function DiaryPage() {
   };
 
   const updateSubject = (id, key, value) =>
-    setSubjects((rows) =>
-      rows.map((r) => (r.id === id ? { ...r, [key]: value } : r))
-    );
+    setSubjects((rows) => rows.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
 
   const addSubject = () => setSubjects((rows) => [...rows, newSubjectRow()]);
 
   const removeSubject = (id) =>
     setSubjects((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
 
-  // "Done" -> render the diary at high resolution and save as PNG. This
-  // always captures the full-size (unscaled) off-screen copy, so the file
-  // comes out identical whether triggered from a phone or a desktop.
   const handleDone = async () => {
-    if (!previewRef.current) return;
+    const node = previewRef.current;
+    if (!node) return;
     setSaving(true);
+    // Force the diary back to full size (undoing the on-screen responsive
+    // scale) and wait for the browser to actually paint that before
+    // capturing, so the downloaded image is always full quality regardless
+    // of the device/screen width that triggered it.
+    const prevScale = scale;
+    setScale(1);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     try {
-      // html-to-image renders through the browser's own engine (via an SVG
-      // <foreignObject>), so the PNG comes out pixel-identical to the live
-      // preview — no separate text/layout re-implementation to disagree with
-      // what's on screen, unlike html2canvas.
-      const dataUrl = await toPng(previewRef.current, {
-        pixelRatio: 3,
-        backgroundColor: "#0b2545",
-        cacheBust: true,
+      const canvas = await html2canvas(node, {
+        scale: 3,
+        backgroundColor: "#eef3e6",
+        useCORS: true,
       });
       const link = document.createElement("a");
       const fileDate = meta.date.replace(/\//g, "-") || "diary";
       link.download = `homework-diary-${meta.className || "class"}-${fileDate}.png`;
-      link.href = dataUrl;
+      link.href = canvas.toDataURL("image/png");
       link.click();
     } finally {
+      setScale(prevScale);
       setSaving(false);
     }
   };
-
-  if (!unlocked) {
-    return (
-      <AccessGate
-        title="Daily Home Work Diary"
-        subtitle="Enter the access code to continue."
-        expected={DIARY_ACCESS_CODE}
-        placeholder="Enter code"
-        onSuccess={() => {
-          sessionStorage.setItem(DIARY_SESSION_KEY, "true");
-          setUnlocked(true);
-        }}
-      />
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-base sm:text-lg font-semibold">Daily Home Work Diary — Generator</h1>
+          <h1 className="text-base sm:text-lg font-semibold">
+            {school ? school.name : "Daily Home Work Diary"}
+          </h1>
           <p className="text-xs sm:text-sm text-emerald-100">
             Type your name in Incharge to auto-fill your class, then add each subject's homework.
           </p>
@@ -161,6 +173,11 @@ export default function DiaryPage() {
       <main className="max-w-6xl mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* ---------------- FORM ---------------- */}
         <section className="bg-white rounded-lg shadow p-4 sm:p-5 space-y-5">
+          {schoolError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md px-4 py-2">
+              {schoolError}
+            </div>
+          )}
           <div>
             <h2 className="font-semibold text-slate-800 mb-3">Diary details</h2>
             <div className="grid grid-cols-2 gap-3">
@@ -260,72 +277,25 @@ export default function DiaryPage() {
           </button>
         </section>
 
-        {/* ---------------- LIVE PREVIEW (responsive on-screen copy) ---------------- */}
+        {/* ---------------- LIVE PREVIEW ---------------- */}
         <section className="lg:sticky lg:top-4 self-start">
           <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
-          <ResponsiveDiaryFrame>
-            <DiaryPreview meta={meta} subjects={subjects} note={note} />
-          </ResponsiveDiaryFrame>
+          <div
+            ref={outerRef}
+            className="w-full overflow-hidden rounded shadow border border-slate-300"
+            style={{ height: frameHeight ?? undefined }}
+          >
+            <DiaryPreview
+              ref={previewRef}
+              school={school}
+              meta={meta}
+              subjects={subjects}
+              note={note}
+              scale={scale}
+            />
+          </div>
         </section>
-
-        {/* Full-size, off-screen copy used only for the image export — always
-            renders at DIARY_WIDTH regardless of the viewer's screen size, so
-            the downloaded PNG is identical quality on phone or desktop. */}
-        <div
-          aria-hidden="true"
-          style={{ position: "absolute", top: 0, left: -99999, pointerEvents: "none" }}
-        >
-          <DiaryPreview ref={previewRef} meta={meta} subjects={subjects} note={note} />
-        </div>
       </main>
-    </div>
-  );
-}
-
-// Scales its child (assumed to be DIARY_WIDTH px wide) down to fit whatever
-// width is available — phone, tablet, or desktop — using a CSS transform, so
-// the diary is always fully visible on screen with no horizontal scrolling.
-// The child's own layout size never changes, only how it's painted, so this
-// has no effect on the separate full-size copy used for the actual download.
-function ResponsiveDiaryFrame({ children }) {
-  const outerRef = useRef(null);
-  const innerRef = useRef(null);
-  const [scale, setScale] = useState(1);
-  const [height, setHeight] = useState(null);
-
-  useEffect(() => {
-    const outer = outerRef.current;
-    const inner = innerRef.current;
-    if (!outer || !inner) return;
-
-    const update = () => {
-      const containerWidth = outer.offsetWidth;
-      const naturalHeight = inner.offsetHeight;
-      if (!containerWidth || !naturalHeight) return;
-      const nextScale = Math.min(containerWidth / DIARY_WIDTH, 1);
-      setScale(nextScale);
-      setHeight(naturalHeight * nextScale);
-    };
-
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(outer);
-    ro.observe(inner);
-    return () => ro.disconnect();
-  });
-
-  return (
-    <div
-      ref={outerRef}
-      className="w-full overflow-hidden rounded shadow border border-slate-300"
-      style={{ height: height ?? undefined }}
-    >
-      <div
-        ref={innerRef}
-        style={{ width: DIARY_WIDTH, transform: `scale(${scale})`, transformOrigin: "top left" }}
-      >
-        {children}
-      </div>
     </div>
   );
 }
@@ -344,94 +314,91 @@ function Field({ label, value, onChange, placeholder }) {
   );
 }
 
-// The diary itself, styled to match the school's printed template.
-const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, note }, ref) {
+// The diary itself. School name/address/phone/logos are now dynamic (from
+// whichever school this diary belongs to), same layout for every school.
+const DiaryPreview = React.forwardRef(function DiaryPreview(
+  { school, meta, subjects, note, scale = 1 },
+  ref
+) {
   return (
     <div
       ref={ref}
-      style={{ background: "#0b2545", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
-      className="p-5 text-slate-100 border-4 border-sky-400 rounded-md"
+      style={{
+        background: "#eef3e6",
+        width: DIARY_WIDTH,
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        transform: `scale(${scale})`,
+        transformOrigin: "top left",
+      }}
+      className="p-5 text-slate-900 border-4 border-emerald-800 rounded-md"
     >
-      {/* Header banner */}
-      <div className="border-2 border-sky-400 rounded-2xl px-3 py-2 mb-3 flex items-center justify-between bg-[#123a67]">
-        <img
-          src={minhajUlQuranLogo}
-          alt="Minhaj-ul-Quran"
-          className="w-14 h-14 object-contain shrink-0"
-        />
+      <div className="border-2 border-emerald-800 rounded-sm px-3 py-2 mb-3 flex items-center justify-between bg-[#f4f8ee]">
+        {school?.logoLeft ? (
+          <img src={school.logoLeft} alt="" className="w-14 h-14 object-contain shrink-0" crossOrigin="anonymous" />
+        ) : (
+          <div className="w-14 h-14 rounded-full border border-slate-400 shrink-0" />
+        )}
         <div className="text-center flex-1">
-          <h1 className="text-white font-bold text-2xl leading-tight">{SCHOOL_NAME}</h1>
-          <p className="text-xs text-sky-100">{SCHOOL_ADDRESS}</p>
-          <p className="text-xs text-sky-100">{SCHOOL_PHONE}</p>
+          <h1 className="text-emerald-900 font-bold text-xl leading-tight">
+            {school?.name || "\u00A0"}
+          </h1>
+          <p className="text-[11px] text-slate-700">{school?.address}</p>
+          <p className="text-[11px] text-slate-700">{school?.phone}</p>
         </div>
-        <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
-          <img
-            src={mesLogo}
-            alt="Minhaj Education Society"
-            className="w-full h-full object-contain"
-          />
-        </div>
+        {school?.logoRight ? (
+          <img src={school.logoRight} alt="" className="w-14 h-14 object-contain shrink-0" crossOrigin="anonymous" />
+        ) : (
+          <div className="w-14 h-14 rounded-full border border-slate-400 shrink-0" />
+        )}
       </div>
 
       <p
         dir="rtl"
-        className="text-center mb-5 text-slate-100 font-semibold"
+        className="text-center mb-5 text-slate-900 font-semibold"
         style={{ fontSize: 28, lineHeight: 1.4 }}
       >
         {BISMILLAH}
       </p>
 
-      {/* Meta grid — one shared CSS Grid (not separate flex rows per line),
-          so all four columns are locked to identical widths no matter how
-          long a label's text is (this is what previously let "INCHARGE"
-          push its row's boxes wider than the CLASS/DATE rows above it). */}
-      <div
-        className="border border-sky-700 text-sm mb-3"
-        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
-      >
-        <GridCell bold shaded borderR borderB>CLASS</GridCell>
-        <GridCell borderR borderB>{meta.className}</GridCell>
-        <GridCell bold shaded borderR borderB>SECTION</GridCell>
-        <GridCell borderB>{meta.section}</GridCell>
-
-        <GridCell bold shaded borderR borderB>DATE</GridCell>
-        <GridCell borderR borderB className="text-sky-300">{meta.date}</GridCell>
-        <GridCell bold shaded borderR borderB>DAY</GridCell>
-        <GridCell borderB className="text-sky-300">{meta.day}</GridCell>
-
-        <GridCell bold shaded borderR>INCHARGE</GridCell>
-        <GridCell className="text-sky-300">{meta.incharge}</GridCell>
-        <div />
-        <div />
+      <div className="border border-slate-700 text-sm mb-3">
+        <Row>
+          <Cell bold shaded>CLASS</Cell>
+          <Cell>{meta.className}</Cell>
+          <Cell bold shaded>SECTION</Cell>
+          <Cell>{meta.section}</Cell>
+        </Row>
+        <Row noTop>
+          <Cell bold shaded>DATE</Cell>
+          <Cell className="text-blue-800">{meta.date}</Cell>
+          <Cell bold shaded>DAY</Cell>
+          <Cell className="text-blue-800">{meta.day}</Cell>
+        </Row>
+        <Row noTop>
+          <Cell bold shaded>INCHARGE</Cell>
+          <Cell grow={3} className="text-blue-800">{meta.incharge}</Cell>
+        </Row>
       </div>
 
-      <h2 className="text-center font-bold mb-2 text-white">DAILY HOME WORK DIARY</h2>
+      <h2 className="text-center font-bold mb-2">DAILY HOME WORK DIARY</h2>
 
-      {/* Subjects grid — same shared-grid approach, 4 columns, with the
-          description column spanning the remaining 3. */}
-      <div
-        className="border border-sky-700 text-sm mb-2"
-        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
-      >
-        <GridCell bold borderR borderB className="bg-sky-700 text-white">SUBJECT</GridCell>
-        <GridCell bold borderB span={3} className="bg-sky-700 text-white">DESCRIPTION</GridCell>
-
+      <div className="border border-slate-700 text-sm mb-2">
+        <Row className="bg-emerald-200">
+          <Cell bold>SUBJECT</Cell>
+          <Cell bold grow={3}>DESCRIPTION</Cell>
+        </Row>
         {subjects.map((row) => (
-          <React.Fragment key={row.id}>
-            <GridCell bold borderR borderB tall className="text-slate-100">
-              {row.subject || "\u00A0"}
-            </GridCell>
-            <GridCell borderB span={3} tall wrap className="text-slate-100">
-              {row.description}
-            </GridCell>
-          </React.Fragment>
+          <Row key={row.id} noTop tall>
+            <Cell bold className="text-sky-500">{row.subject || "\u00A0"}</Cell>
+            <Cell grow={3} wrap className="text-sky-500">{row.description}</Cell>
+          </Row>
         ))}
-
-        <GridCell bold borderR tall>NOTE</GridCell>
-        <GridCell span={3} tall wrap className="text-red-300">{note}</GridCell>
+        <Row noTop tall>
+          <Cell bold>NOTE</Cell>
+          <Cell grow={3} wrap className="text-red-700">{note}</Cell>
+        </Row>
       </div>
 
-      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-200 mt-3">
+      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-800 mt-3">
         <p>{DUROOD_1}</p>
         <p>{DUROOD_2}</p>
       </div>
@@ -439,18 +406,24 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
   );
 });
 
-// One cell of the shared CSS Grid. Border sides are passed explicitly
-// (rather than derived from position) since that's simplest and safest with
-// spanning cells. Being a flex container itself (not needing a parent's
-// height as a percentage) keeps vertical centering correct on export too.
-function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, className = "", children }) {
+function Row({ children, className = "", noTop, tall }) {
   return (
     <div
-      style={{ gridColumn: `span ${span}` }}
-      className={`flex items-center justify-center text-center px-2 ${
-        tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
-      } ${borderR ? "border-r border-sky-700" : ""} ${borderB ? "border-b border-sky-700" : ""} ${
-        shaded ? "bg-[#173f6c] text-white" : ""
+      className={`flex w-full ${noTop ? "border-t border-slate-700" : ""} ${
+        tall ? "min-h-[46px]" : "min-h-[34px]"
+      } ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Cell({ bold, shaded, wrap, grow = 1, className = "", children }) {
+  return (
+    <div
+      style={{ flexGrow: grow, flexBasis: 0 }}
+      className={`flex items-center justify-center text-center border-l border-slate-700 first:border-l-0 px-2 py-1.5 ${
+        shaded ? "bg-slate-50" : ""
       } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
     >
       {children}

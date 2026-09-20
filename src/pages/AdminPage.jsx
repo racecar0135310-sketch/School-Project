@@ -1,16 +1,42 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { loadTeachers, createTeacher, updateTeacher, deleteTeacher } from "../lib/storage.js";
+import { Link, useParams } from "react-router-dom";
+import {
+  getSchool,
+  loadTeachers,
+  createTeacher,
+  updateTeacher,
+  deleteTeacher,
+  verifySchoolAdminPassword,
+} from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
-const ADMIN_PASSWORD = "Mutahhar@135";
-const ADMIN_SESSION_KEY = "admin-access-granted";
 
 export default function AdminPage() {
-  const [unlocked, setUnlocked] = useState(
-    () => sessionStorage.getItem(ADMIN_SESSION_KEY) === "true"
-  );
+  const { slug } = useParams();
+  const sessionKey = `admin-access-${slug}`;
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(sessionKey) === "true");
+
+  if (!unlocked) {
+    return (
+      <AccessGate
+        title="Admin Portal"
+        subtitle="Enter this school's admin password to continue."
+        placeholder="Enter password"
+        onVerify={(password) => verifySchoolAdminPassword(slug, password)}
+        onSuccess={() => {
+          sessionStorage.setItem(sessionKey, "true");
+          setUnlocked(true);
+        }}
+      />
+    );
+  }
+
+  return <AdminEditor slug={slug} />;
+}
+
+function AdminEditor({ slug }) {
+  const [school, setSchool] = useState(null);
   const [teachers, setTeachers] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -21,7 +47,8 @@ export default function AdminPage() {
   const refresh = async () => {
     try {
       setError("");
-      const list = await loadTeachers();
+      const [s, list] = await Promise.all([getSchool(slug), loadTeachers(slug)]);
+      setSchool(s);
       setTeachers(list);
     } catch (err) {
       setError("Couldn't reach the server. Check your connection and try again.");
@@ -31,8 +58,9 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    if (unlocked) refresh();
-  }, [unlocked]);
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
 
   const resetForm = () => {
     setForm(emptyForm);
@@ -59,9 +87,9 @@ export default function AdminPage() {
     setError("");
     try {
       if (editingId) {
-        await updateTeacher(editingId, payload);
+        await updateTeacher(slug, editingId, payload);
       } else {
-        await createTeacher(payload);
+        await createTeacher(slug, payload);
       }
       await refresh();
       resetForm();
@@ -85,7 +113,7 @@ export default function AdminPage() {
   const handleDelete = async (id) => {
     setError("");
     try {
-      await deleteTeacher(id);
+      await deleteTeacher(slug, id);
       if (editingId === id) resetForm();
       await refresh();
     } catch (err) {
@@ -93,33 +121,20 @@ export default function AdminPage() {
     }
   };
 
-  if (!unlocked) {
-    return (
-      <AccessGate
-        title="Admin Portal"
-        subtitle="Enter the admin password to continue."
-        expected={ADMIN_PASSWORD}
-        placeholder="Enter password"
-        onSuccess={() => {
-          sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
-          setUnlocked(true);
-        }}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-base sm:text-lg font-semibold">Admin — Class Incharges</h1>
+          <h1 className="text-base sm:text-lg font-semibold">
+            Admin — {school ? school.name : "Class Incharges"}
+          </h1>
           <p className="text-xs sm:text-sm text-emerald-100">
             Add each teacher once with their class, section and subjects. The
             diary page will auto-fill this when the teacher types their name.
           </p>
         </div>
         <Link
-          to="/"
+          to={`/${slug}`}
           className="self-start sm:self-auto bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
         >
           ← Back to diary
