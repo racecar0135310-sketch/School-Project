@@ -35,12 +35,8 @@ export default function DevPortal() {
           if (ok) {
             // Save the password we just verified directly here, using the
             // value passed into this function — not the component's
-            // `devPassword` state variable. Reading that state right after
-            // calling its setter would give back the OLD value (React
-            // batches the update and only applies it on the next render),
-            // which is what was silently saving an empty/stale password
-            // into sessionStorage and breaking every request right after
-            // a successful login.
+            // `devPassword` state variable, since reading that state right
+            // after calling its setter would give back the OLD value.
             sessionStorage.setItem(SESSION_KEY + "-pw", password);
             setDevPassword(password);
           }
@@ -61,6 +57,11 @@ function DevEditor({ devPassword }) {
   const [schools, setSchools] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  // Bumped every time the form should reset to blank/fresh fields. Used as
+  // part of the form's `key` below so the browser fully remounts the inputs
+  // (clearing them for real) instead of us trying to fight autofill by
+  // setting React state that the DOM may not visually reflect.
+  const [formKey, setFormKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -84,21 +85,40 @@ function DevEditor({ devPassword }) {
   const resetForm = () => {
     setForm(emptyForm);
     setEditingId(null);
+    setFormKey((k) => k + 1); // remount inputs so they're guaranteed blank
   };
 
+  // Reads straight from the actual <form> element's inputs at submit time —
+  // this is what the browser is really showing, regardless of whether an
+  // autofill or password manager updated the DOM without React noticing.
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.slug.trim() || !form.name.trim() || !form.generalCode.trim() || !form.adminPassword.trim()) {
+    const data = new FormData(e.target);
+    const get = (key) => (data.get(key) || "").toString().trim();
+
+    const payload = {
+      slug: get("slug"),
+      name: get("name"),
+      address: get("address"),
+      phone: get("phone"),
+      logoLeft: get("logoLeft"),
+      logoRight: get("logoRight"),
+      generalCode: get("generalCode"),
+      adminPassword: get("adminPassword"),
+    };
+
+    if (!payload.slug || !payload.name || !payload.generalCode || !payload.adminPassword) {
       setError("Slug, name, general code and admin password are all required.");
       return;
     }
+
     setSubmitting(true);
     setError("");
     try {
       if (editingId) {
-        await devUpdateSchool(devPassword, editingId, form);
+        await devUpdateSchool(devPassword, editingId, payload);
       } else {
-        await devCreateSchool(devPassword, form);
+        await devCreateSchool(devPassword, payload);
       }
       await refresh();
       resetForm();
@@ -121,6 +141,7 @@ function DevEditor({ devPassword }) {
       generalCode: s.generalCode,
       adminPassword: s.adminPassword,
     });
+    setFormKey((k) => k + 1); // remount so the defaultValues below take effect
   };
 
   const handleDelete = async (id) => {
@@ -152,60 +173,64 @@ function DevEditor({ devPassword }) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-5 space-y-3">
+        <form
+          key={formKey}
+          onSubmit={handleSubmit}
+          className="bg-white rounded-lg shadow p-5 space-y-3"
+        >
           <h2 className="font-semibold text-slate-800">
             {editingId ? "Edit school" : "Add a new school"}
           </h2>
           <div className="grid grid-cols-2 gap-3">
             <Field
+              name="slug"
               label="Slug (used in the URL)"
-              value={form.slug}
-              onChange={(v) => setForm((f) => ({ ...f, slug: v }))}
+              defaultValue={form.slug}
               placeholder="e.g. minhaj-girls"
             />
             <Field
+              name="name"
               label="School name"
-              value={form.name}
-              onChange={(v) => setForm((f) => ({ ...f, name: v }))}
+              defaultValue={form.name}
               placeholder="e.g. Minhaj-ul-Quran Girls School"
             />
             <div className="col-span-2">
               <Field
+                name="address"
                 label="Address"
-                value={form.address}
-                onChange={(v) => setForm((f) => ({ ...f, address: v }))}
+                defaultValue={form.address}
                 placeholder="e.g. Gulfishan Colony, Jhang Road, Faisalabad"
               />
             </div>
             <Field
+              name="phone"
               label="Phone"
-              value={form.phone}
-              onChange={(v) => setForm((f) => ({ ...f, phone: v }))}
+              defaultValue={form.phone}
               placeholder="e.g. (041-265 1699-265 1290)"
             />
             <div />
             <Field
+              name="logoLeft"
               label="Left logo URL (optional)"
-              value={form.logoLeft}
-              onChange={(v) => setForm((f) => ({ ...f, logoLeft: v }))}
+              defaultValue={form.logoLeft}
               placeholder="https://…"
             />
             <Field
+              name="logoRight"
               label="Right logo URL (optional)"
-              value={form.logoRight}
-              onChange={(v) => setForm((f) => ({ ...f, logoRight: v }))}
+              defaultValue={form.logoRight}
               placeholder="https://…"
             />
             <Field
+              name="generalCode"
               label="Diary access code"
-              value={form.generalCode}
-              onChange={(v) => setForm((f) => ({ ...f, generalCode: v }))}
+              defaultValue={form.generalCode}
               placeholder="e.g. 135135"
             />
             <Field
+              name="adminPassword"
               label="Admin password"
-              value={form.adminPassword}
-              onChange={(v) => setForm((f) => ({ ...f, adminPassword: v }))}
+              defaultValue={form.adminPassword}
               placeholder="e.g. Mutahhar@135"
             />
           </div>
@@ -269,15 +294,15 @@ function DevEditor({ devPassword }) {
   );
 }
 
-function Field({ label, value, onChange, placeholder }) {
+function Field({ name, label, defaultValue, placeholder }) {
   return (
     <label className="block">
       <span className="text-xs font-medium text-slate-500">{label}</span>
       <input
+        name={name}
+        defaultValue={defaultValue}
         className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
-        value={value}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
       />
     </label>
   );
