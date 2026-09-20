@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { loadTeachers, saveTeachers } from "../lib/storage.js";
+import { loadTeachers, createTeacher, updateTeacher, deleteTeacher } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
@@ -14,22 +14,32 @@ export default function AdminPage() {
   const [teachers, setTeachers] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const refresh = async () => {
+    try {
+      setError("");
+      const list = await loadTeachers();
+      setTeachers(list);
+    } catch (err) {
+      setError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    setTeachers(loadTeachers());
-  }, []);
-
-  const persist = (next) => {
-    setTeachers(next);
-    saveTeachers(next);
-  };
+    if (unlocked) refresh();
+  }, [unlocked]);
 
   const resetForm = () => {
     setForm(emptyForm);
     setEditingId(null);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.inchargeName.trim()) return;
 
@@ -38,31 +48,28 @@ export default function AdminPage() {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    if (editingId) {
-      persist(
-        teachers.map((t) =>
-          t.id === editingId
-            ? {
-                ...t,
-                inchargeName: form.inchargeName.trim(),
-                className: form.className.trim(),
-                section: form.section.trim(),
-                subjects,
-              }
-            : t
-        )
-      );
-    } else {
-      const newTeacher = {
-        id: Date.now(),
-        inchargeName: form.inchargeName.trim(),
-        className: form.className.trim(),
-        section: form.section.trim(),
-        subjects,
-      };
-      persist([...teachers, newTeacher]);
+    const payload = {
+      inchargeName: form.inchargeName.trim(),
+      className: form.className.trim(),
+      section: form.section.trim(),
+      subjects,
+    };
+
+    setSubmitting(true);
+    setError("");
+    try {
+      if (editingId) {
+        await updateTeacher(editingId, payload);
+      } else {
+        await createTeacher(payload);
+      }
+      await refresh();
+      resetForm();
+    } catch (err) {
+      setError("Couldn't save that — please try again.");
+    } finally {
+      setSubmitting(false);
     }
-    resetForm();
   };
 
   const handleEdit = (t) => {
@@ -75,9 +82,15 @@ export default function AdminPage() {
     });
   };
 
-  const handleDelete = (id) => {
-    persist(teachers.filter((t) => t.id !== id));
-    if (editingId === id) resetForm();
+  const handleDelete = async (id) => {
+    setError("");
+    try {
+      await deleteTeacher(id);
+      if (editingId === id) resetForm();
+      await refresh();
+    } catch (err) {
+      setError("Couldn't delete that — please try again.");
+    }
   };
 
   if (!unlocked) {
@@ -114,6 +127,12 @@ export default function AdminPage() {
       </header>
 
       <main className="max-w-3xl mx-auto p-3 sm:p-4 space-y-6">
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md px-4 py-2">
+            {error}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-5 space-y-3">
           <h2 className="font-semibold text-slate-800">
             {editingId ? "Edit incharge" : "Add a new incharge"}
@@ -151,9 +170,10 @@ export default function AdminPage() {
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
-              className="bg-emerald-700 hover:bg-emerald-800 text-white font-medium rounded-md px-4 py-2 text-sm"
+              disabled={submitting}
+              className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-medium rounded-md px-4 py-2 text-sm"
             >
-              {editingId ? "Save changes" : "Add incharge"}
+              {submitting ? "Saving…" : editingId ? "Save changes" : "Add incharge"}
             </button>
             {editingId && (
               <button
@@ -169,7 +189,9 @@ export default function AdminPage() {
 
         <div className="bg-white rounded-lg shadow p-5">
           <h2 className="font-semibold text-slate-800 mb-3">Saved incharges</h2>
-          {teachers.length === 0 ? (
+          {loading ? (
+            <p className="text-sm text-slate-400">Loading…</p>
+          ) : teachers.length === 0 ? (
             <p className="text-sm text-slate-400">No incharges added yet.</p>
           ) : (
             <div className="divide-y divide-slate-100">

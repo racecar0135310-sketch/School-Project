@@ -60,7 +60,18 @@ export default function DiaryPage() {
   const previewRef = useRef(null);
 
   useEffect(() => {
-    setTeachers(loadTeachers());
+    let cancelled = false;
+    loadTeachers()
+      .then((list) => {
+        if (!cancelled) setTeachers(list);
+      })
+      .catch(() => {
+        // If the API is briefly unreachable, the incharge dropdown just
+        // won't auto-fill — the rest of the diary still works manually.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
@@ -348,18 +359,16 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           alt="Minhaj-ul-Quran"
           className="w-14 h-14 object-contain shrink-0"
         />
-        <div className="text-center flex-1 px-2">
-          <h1 className="text-white font-bold text-[23px] leading-tight">{SCHOOL_NAME}</h1>
-          <p className="text-[13px] text-sky-100">{SCHOOL_ADDRESS}</p>
-          <p className="text-[13px] text-sky-100">{SCHOOL_PHONE}</p>
+        <div className="text-center flex-1">
+          <h1 className="text-white font-bold text-2xl leading-tight">{SCHOOL_NAME}</h1>
+          <p className="text-xs text-sky-100">{SCHOOL_ADDRESS}</p>
+          <p className="text-xs text-sky-100">{SCHOOL_PHONE}</p>
         </div>
-        {/* White plate behind the MES logo — its artwork is dark, so it
-            disappeared against the navy banner. */}
-        <div className="bg-white rounded-lg p-1 shrink-0 flex items-center justify-center">
+        <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
           <img
             src={mesLogo}
             alt="Minhaj Education Society"
-            className="w-14 h-14 object-contain"
+            className="w-full h-full object-contain"
           />
         </div>
       </div>
@@ -377,7 +386,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           long a label's text is (this is what previously let "INCHARGE"
           push its row's boxes wider than the CLASS/DATE rows above it). */}
       <div
-        className="border border-sky-700 text-[15px] mb-3"
+        className="border border-sky-700 text-sm mb-3"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
         <GridCell bold shaded borderR borderB>CLASS</GridCell>
@@ -396,12 +405,12 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         <div />
       </div>
 
-      <h2 className="text-center font-bold mb-2 text-white text-[18px]">DAILY HOME WORK DIARY</h2>
+      <h2 className="text-center font-bold mb-2 text-white">DAILY HOME WORK DIARY</h2>
 
       {/* Subjects grid — same shared-grid approach, 4 columns, with the
           description column spanning the remaining 3. */}
       <div
-        className="border border-sky-700 text-[15px] mb-2"
+        className="border border-sky-700 text-sm mb-2"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
         <GridCell bold borderR borderB className="bg-sky-700 text-white">SUBJECT</GridCell>
@@ -422,7 +431,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         <GridCell span={3} tall wrap className="text-red-300">{note}</GridCell>
       </div>
 
-      <div dir="rtl" className="text-center text-[15px] leading-8 text-slate-200 mt-3">
+      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-200 mt-3">
         <p>{DUROOD_1}</p>
         <p>{DUROOD_2}</p>
       </div>
@@ -439,7 +448,7 @@ function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, classN
     <div
       style={{ gridColumn: `span ${span}` }}
       className={`flex items-center justify-center text-center px-2 ${
-        tall ? "min-h-[50px] py-2" : "min-h-[38px] py-1.5"
+        tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
       } ${borderR ? "border-r border-sky-700" : ""} ${borderB ? "border-b border-sky-700" : ""} ${
         shaded ? "bg-[#173f6c] text-white" : ""
       } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
