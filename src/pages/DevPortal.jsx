@@ -32,12 +32,22 @@ export default function DevPortal() {
         placeholder="Enter dev password"
         onVerify={async (password) => {
           const ok = await devLogin(password);
-          if (ok) setDevPassword(password);
+          if (ok) {
+            // Save the password we just verified directly here, using the
+            // value passed into this function — not the component's
+            // `devPassword` state variable. Reading that state right after
+            // calling its setter would give back the OLD value (React
+            // batches the update and only applies it on the next render),
+            // which is what was silently saving an empty/stale password
+            // into sessionStorage and breaking every request right after
+            // a successful login.
+            sessionStorage.setItem(SESSION_KEY + "-pw", password);
+            setDevPassword(password);
+          }
           return ok;
         }}
         onSuccess={() => {
           sessionStorage.setItem(SESSION_KEY, "true");
-          sessionStorage.setItem(SESSION_KEY + "-pw", devPassword);
           setUnlocked(true);
         }}
       />
