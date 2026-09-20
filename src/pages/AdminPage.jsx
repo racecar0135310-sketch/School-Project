@@ -1,42 +1,26 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  getSchool,
   loadTeachers,
   createTeacher,
   updateTeacher,
   deleteTeacher,
-  verifySchoolAdminPassword,
+  getSchool,
+  verifyAdminPassword,
 } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
 
 export default function AdminPage() {
-  const { slug } = useParams();
-  const sessionKey = `admin-access-${slug}`;
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(sessionKey) === "true");
+  const { schoolId } = useParams();
+  const sessionKey = `admin-access-granted-${schoolId}`;
 
-  if (!unlocked) {
-    return (
-      <AccessGate
-        title="Admin Portal"
-        subtitle="Enter this school's admin password to continue."
-        placeholder="Enter password"
-        onVerify={(password) => verifySchoolAdminPassword(slug, password)}
-        onSuccess={() => {
-          sessionStorage.setItem(sessionKey, "true");
-          setUnlocked(true);
-        }}
-      />
-    );
-  }
-
-  return <AdminEditor slug={slug} />;
-}
-
-function AdminEditor({ slug }) {
+  const [unlocked, setUnlocked] = useState(
+    () => sessionStorage.getItem(sessionKey) === "true"
+  );
   const [school, setSchool] = useState(null);
+  const [schoolError, setSchoolError] = useState(false);
   const [teachers, setTeachers] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -44,11 +28,24 @@ function AdminEditor({ slug }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    getSchool(schoolId)
+      .then((s) => {
+        if (!cancelled) setSchool(s);
+      })
+      .catch(() => {
+        if (!cancelled) setSchoolError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId]);
+
   const refresh = async () => {
     try {
       setError("");
-      const [s, list] = await Promise.all([getSchool(slug), loadTeachers(slug)]);
-      setSchool(s);
+      const list = await loadTeachers(schoolId);
       setTeachers(list);
     } catch (err) {
       setError("Couldn't reach the server. Check your connection and try again.");
@@ -58,9 +55,8 @@ function AdminEditor({ slug }) {
   };
 
   useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug]);
+    if (unlocked) refresh();
+  }, [unlocked]);
 
   const resetForm = () => {
     setForm(emptyForm);
@@ -87,9 +83,9 @@ function AdminEditor({ slug }) {
     setError("");
     try {
       if (editingId) {
-        await updateTeacher(slug, editingId, payload);
+        await updateTeacher(editingId, payload);
       } else {
-        await createTeacher(slug, payload);
+        await createTeacher(schoolId, payload);
       }
       await refresh();
       resetForm();
@@ -113,7 +109,7 @@ function AdminEditor({ slug }) {
   const handleDelete = async (id) => {
     setError("");
     try {
-      await deleteTeacher(slug, id);
+      await deleteTeacher(id);
       if (editingId === id) resetForm();
       await refresh();
     } catch (err) {
@@ -121,12 +117,43 @@ function AdminEditor({ slug }) {
     }
   };
 
+  if (schoolError) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow p-6 max-w-sm text-center space-y-3">
+          <h1 className="font-semibold text-slate-800">School not found</h1>
+          <p className="text-sm text-slate-500">
+            This admin link doesn't match a school we know about.
+          </p>
+          <Link to="/" className="text-emerald-700 text-sm font-medium hover:text-emerald-900">
+            ← Choose a school
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (!unlocked) {
+    return (
+      <AccessGate
+        title={school ? `${school.name} — Admin` : "Admin Portal"}
+        subtitle="Enter the admin password to continue."
+        onVerify={(password) => verifyAdminPassword(schoolId, password)}
+        placeholder="Enter password"
+        onSuccess={() => {
+          sessionStorage.setItem(sessionKey, "true");
+          setUnlocked(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-base sm:text-lg font-semibold">
-            Admin — {school ? school.name : "Class Incharges"}
+            Admin — Class Incharges{school ? ` · ${school.name}` : ""}
           </h1>
           <p className="text-xs sm:text-sm text-emerald-100">
             Add each teacher once with their class, section and subjects. The
@@ -134,7 +161,7 @@ function AdminEditor({ slug }) {
           </p>
         </div>
         <Link
-          to={`/${slug}`}
+          to={`/school/${schoolId}`}
           className="self-start sm:self-auto bg-white/10 hover:bg-white/20 text-sm font-medium px-3 py-1.5 rounded"
         >
           ← Back to diary

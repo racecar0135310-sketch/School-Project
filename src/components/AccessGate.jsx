@@ -1,33 +1,35 @@
 import React, { useState } from "react";
 
-// A simple lock screen: the child page only renders after the visitor
-// enters the right code/password. `onVerify` does the actual checking —
-// normally an API call to the server, so the real code/password never sits
-// inside the JS bundle where anyone could read it.
+// A simple lock screen: the child page is only rendered after the visitor
+// enters the expected code/password. Pass either:
+//   - expected: a plain string to compare against locally, or
+//   - onVerify: an async (value) => boolean function (e.g. checking against
+//     the server), for codes that live in the database instead of source code.
 export default function AccessGate({
   title,
   subtitle,
+  expected,
   onVerify,
   placeholder = "Enter password",
   onSuccess,
 }) {
   const [value, setValue] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError("");
     setChecking(true);
-    setError(false);
     try {
-      const ok = await onVerify(value);
+      const ok = onVerify ? await onVerify(value) : value === expected;
       if (ok) {
-        onSuccess();
+        onSuccess(value);
       } else {
-        setError(true);
+        setError("That's not correct — please try again.");
       }
     } catch (err) {
-      setError(true);
+      setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setChecking(false);
     }
@@ -49,7 +51,7 @@ export default function AccessGate({
           value={value}
           onChange={(e) => {
             setValue(e.target.value);
-            setError(false);
+            setError("");
           }}
           placeholder={placeholder}
           className={`w-full border rounded px-3 py-2 text-sm text-center tracking-widest focus:outline-none focus:ring-2 ${
@@ -58,11 +60,7 @@ export default function AccessGate({
               : "border-slate-300 focus:ring-emerald-600"
           }`}
         />
-        {error && (
-          <p className="text-xs text-red-600 text-center">
-            That's not correct — please try again.
-          </p>
-        )}
+        {error && <p className="text-xs text-red-600 text-center">{error}</p>}
         <button
           type="submit"
           disabled={checking}

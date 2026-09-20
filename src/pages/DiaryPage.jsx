@@ -1,20 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useParams, Link } from "react-router-dom";
 import { toPng } from "html-to-image";
-import { loadTeachers, findTeacherByName } from "../lib/storage.js";
+import { loadTeachers, findTeacherByName, getSchool, verifyDiaryCode } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
-
-const DIARY_ACCESS_CODE = "135135";
-const DIARY_SESSION_KEY = "diary-access-granted";
 
 // Logos live in /public/logos so they load with a plain, absolute path —
 // this works the same in dev, build, and preview, with no bundler import needed.
 const minhajUlQuranLogo = "/logos/minhaj-ul-quran-logo.png";
 const mesLogo = "/logos/minhaj-education-society-logo.png";
 
-// ---- Fixed template text (same every time, matches the school's printed diary) ----
-const SCHOOL_NAME = "Minhaj-ul-Quran Model Secondary School";
-const SCHOOL_ADDRESS = "Gulfishan Colony,Jhang Road,Faisalabad";
-const SCHOOL_PHONE = "(041-265 1699-265 1290)";
 const BISMILLAH = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
 const DUROOD_1 =
   "اَللّٰهُمَّ صَلِّ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا صَلَّیْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
@@ -22,7 +16,7 @@ const DUROOD_2 =
   "اَللّٰهُمَّ بَارِکْ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا بَارَکْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
 
 // The diary is always laid out at this pixel width internally, so the
-// downloaded image is identical quality no matter what device generated it. message, to basically,
+// downloaded image is identical quality no matter what device generated it.
 // On screen it's scaled down to fit — see ResponsiveDiaryFrame below.
 const DIARY_WIDTH = 560;
 
@@ -38,9 +32,14 @@ let idCounter = 1;
 const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
 
 export default function DiaryPage() {
+  const { schoolId } = useParams();
+  const sessionKey = `diary-access-granted-${schoolId}`;
+
   const [unlocked, setUnlocked] = useState(
-    () => sessionStorage.getItem(DIARY_SESSION_KEY) === "true"
+    () => sessionStorage.getItem(sessionKey) === "true"
   );
+  const [school, setSchool] = useState(null);
+  const [schoolError, setSchoolError] = useState(false);
   const [teachers, setTeachers] = useState([]);
   const [meta, setMeta] = useState({
     className: "",
@@ -60,8 +59,34 @@ export default function DiaryPage() {
   const previewRef = useRef(null);
 
   useEffect(() => {
-    setTeachers(loadTeachers());
-  }, []);
+    let cancelled = false;
+    getSchool(schoolId)
+      .then((s) => {
+        if (!cancelled) setSchool(s);
+      })
+      .catch(() => {
+        if (!cancelled) setSchoolError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    let cancelled = false;
+    loadTeachers(schoolId)
+      .then((list) => {
+        if (!cancelled) setTeachers(list);
+      })
+      .catch(() => {
+        // If the API is briefly unreachable, the incharge dropdown just
+        // won't auto-fill — the rest of the diary still works manually.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId, unlocked]);
 
   const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
 
@@ -121,15 +146,32 @@ export default function DiaryPage() {
     }
   };
 
+  if (schoolError) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow p-6 max-w-sm text-center space-y-3">
+          <h1 className="font-semibold text-slate-800">School not found</h1>
+          <p className="text-sm text-slate-500">
+            This link doesn't match a school we know about. Please check the link
+            or pick your school again.
+          </p>
+          <Link to="/" className="text-emerald-700 text-sm font-medium hover:text-emerald-900">
+            ← Choose a school
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (!unlocked) {
     return (
       <AccessGate
-        title="Daily Home Work Diary"
+        title={school ? school.name : "Daily Home Work Diary"}
         subtitle="Enter the access code to continue."
-        expected={DIARY_ACCESS_CODE}
+        onVerify={(code) => verifyDiaryCode(schoolId, code)}
         placeholder="Enter code"
         onSuccess={() => {
-          sessionStorage.setItem(DIARY_SESSION_KEY, "true");
+          sessionStorage.setItem(sessionKey, "true");
           setUnlocked(true);
         }}
       />
@@ -253,7 +295,7 @@ export default function DiaryPage() {
         <section className="lg:sticky lg:top-4 self-start">
           <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
           <ResponsiveDiaryFrame>
-            <DiaryPreview meta={meta} subjects={subjects} note={note} />
+            <DiaryPreview school={school} meta={meta} subjects={subjects} note={note} />
           </ResponsiveDiaryFrame>
         </section>
 
@@ -264,7 +306,7 @@ export default function DiaryPage() {
           aria-hidden="true"
           style={{ position: "absolute", top: 0, left: -99999, pointerEvents: "none" }}
         >
-          <DiaryPreview ref={previewRef} meta={meta} subjects={subjects} note={note} />
+          <DiaryPreview ref={previewRef} school={school} meta={meta} subjects={subjects} note={note} />
         </div>
       </main>
     </div>
@@ -334,7 +376,7 @@ function Field({ label, value, onChange, placeholder }) {
 }
 
 // The diary itself, styled to match the school's printed template.
-const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, note }, ref) {
+const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subjects, note }, ref) {
   return (
     <div
       ref={ref}
@@ -348,18 +390,16 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           alt="Minhaj-ul-Quran"
           className="w-14 h-14 object-contain shrink-0"
         />
-        <div className="text-center flex-1 px-2">
-          <h1 className="text-white font-bold text-[23px] leading-tight">{SCHOOL_NAME}</h1>
-          <p className="text-[13px] text-sky-100">{SCHOOL_ADDRESS}</p>
-          <p className="text-[13px] text-sky-100">{SCHOOL_PHONE}</p>
+        <div className="text-center flex-1">
+          <h1 className="text-white font-bold text-2xl leading-tight">{school?.name}</h1>
+          <p className="text-xs text-sky-100">{school?.address}</p>
+          <p className="text-xs text-sky-100">{school?.phone}</p>
         </div>
-        {/* White plate behind the MES logo — its artwork is dark, so it
-            disappeared against the navy banner. */}
-        <div className="bg-white rounded-lg p-1 shrink-0 flex items-center justify-center">
+        <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
           <img
             src={mesLogo}
             alt="Minhaj Education Society"
-            className="w-14 h-14 object-contain"
+            className="w-full h-full object-contain"
           />
         </div>
       </div>
@@ -377,7 +417,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
           long a label's text is (this is what previously let "INCHARGE"
           push its row's boxes wider than the CLASS/DATE rows above it). */}
       <div
-        className="border border-sky-700 text-[15px] mb-3"
+        className="border border-sky-700 text-sm mb-3"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
         <GridCell bold shaded borderR borderB>CLASS</GridCell>
@@ -396,12 +436,12 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         <div />
       </div>
 
-      <h2 className="text-center font-bold mb-2 text-white text-[18px]">DAILY HOME WORK DIARY</h2>
+      <h2 className="text-center font-bold mb-2 text-white">DAILY HOME WORK DIARY</h2>
 
       {/* Subjects grid — same shared-grid approach, 4 columns, with the
           description column spanning the remaining 3. */}
       <div
-        className="border border-sky-700 text-[15px] mb-2"
+        className="border border-sky-700 text-sm mb-2"
         style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
       >
         <GridCell bold borderR borderB className="bg-sky-700 text-white">SUBJECT</GridCell>
@@ -422,7 +462,7 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ meta, subjects, no
         <GridCell span={3} tall wrap className="text-red-300">{note}</GridCell>
       </div>
 
-      <div dir="rtl" className="text-center text-[15px] leading-8 text-slate-200 mt-3">
+      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-200 mt-3">
         <p>{DUROOD_1}</p>
         <p>{DUROOD_2}</p>
       </div>
@@ -439,7 +479,7 @@ function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, classN
     <div
       style={{ gridColumn: `span ${span}` }}
       className={`flex items-center justify-center text-center px-2 ${
-        tall ? "min-h-[50px] py-2" : "min-h-[38px] py-1.5"
+        tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
       } ${borderR ? "border-r border-sky-700" : ""} ${borderB ? "border-b border-sky-700" : ""} ${
         shaded ? "bg-[#173f6c] text-white" : ""
       } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}

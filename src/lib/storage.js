@@ -1,13 +1,12 @@
-// Talks to the Express + MongoDB API in /server. Every school's diary and
-// admin data is scoped by its slug, so different schools never see each
-// other's incharges — and the dev portal is the only place that can see or
-// change a school's codes/passwords.
+// Talks to the Express + MongoDB API in /server. Every device sees the same
+// shared data, scoped per school.
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 async function request(path, options = {}) {
+  const { headers, ...rest } = options;
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
+    headers: { "Content-Type": "application/json", ...headers },
+    ...rest,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -16,73 +15,76 @@ async function request(path, options = {}) {
   return res.json();
 }
 
-function withId(doc) {
-  return { ...doc, id: doc._id };
-}
-
-// ---- Public: school list + info ----
+// ---------------------------------------------------------------------
+// Schools (public)
+// ---------------------------------------------------------------------
 export async function listSchools() {
-  const schools = await request("/api/schools");
-  return schools.map(withId);
+  return request("/api/schools");
 }
 
-export async function getSchool(slug) {
-  return withId(await request(`/api/schools/${slug}`));
+export async function getSchool(schoolId) {
+  return request(`/api/schools/${schoolId}`);
 }
 
-export async function verifySchoolCode(slug, code) {
-  const { ok } = await request(`/api/schools/${slug}/verify-code`, {
+export async function verifyDiaryCode(schoolId, code) {
+  const { ok } = await request(`/api/schools/${schoolId}/verify-code`, {
     method: "POST",
     body: JSON.stringify({ code }),
   });
   return ok;
 }
 
-export async function verifySchoolAdminPassword(slug, password) {
-  const { ok } = await request(`/api/schools/${slug}/verify-admin`, {
+export async function verifyAdminPassword(schoolId, password) {
+  const { ok } = await request(`/api/schools/${schoolId}/verify-admin`, {
     method: "POST",
     body: JSON.stringify({ password }),
   });
   return ok;
 }
 
-// ---- Teachers, scoped to one school ----
-export async function loadTeachers(slug) {
-  const teachers = await request(`/api/schools/${slug}/teachers`);
-  return teachers.map(withId);
+// ---------------------------------------------------------------------
+// Teachers (public, but always scoped to one school)
+// ---------------------------------------------------------------------
+export async function loadTeachers(schoolId) {
+  const teachers = await request(`/api/teachers?schoolId=${schoolId}`);
+  return teachers.map((t) => ({ ...t, id: t._id }));
 }
 
-export async function createTeacher(slug, teacher) {
-  return withId(
-    await request(`/api/schools/${slug}/teachers`, {
-      method: "POST",
-      body: JSON.stringify(teacher),
-    })
-  );
+export async function createTeacher(schoolId, teacher) {
+  const created = await request("/api/teachers", {
+    method: "POST",
+    body: JSON.stringify({ ...teacher, schoolId }),
+  });
+  return { ...created, id: created._id };
 }
 
-export async function updateTeacher(slug, id, teacher) {
-  return withId(
-    await request(`/api/schools/${slug}/teachers/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(teacher),
-    })
-  );
+export async function updateTeacher(id, teacher) {
+  const updated = await request(`/api/teachers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(teacher),
+  });
+  return { ...updated, id: updated._id };
 }
 
-export async function deleteTeacher(slug, id) {
-  await request(`/api/schools/${slug}/teachers/${id}`, { method: "DELETE" });
+export async function deleteTeacher(id) {
+  await request(`/api/teachers/${id}`, { method: "DELETE" });
 }
 
 export function findTeacherByName(teachers, name) {
   const target = (name || "").trim().toLowerCase();
   if (!target) return null;
-  return teachers.find((t) => t.inchargeName.trim().toLowerCase() === target) || null;
+  return (
+    teachers.find((t) => t.inchargeName.trim().toLowerCase() === target) ||
+    null
+  );
 }
 
-// ---- Dev portal (manages every school, including its secrets) ----
-export async function devLogin(password) {
-  const { ok } = await request("/api/dev/login", {
+// ---------------------------------------------------------------------
+// Dev portal — every call needs the dev password, sent as a header and
+// checked server-side against the DEV_PASSWORD environment variable.
+// ---------------------------------------------------------------------
+export async function verifyDevPassword(password) {
+  const { ok } = await request("/api/dev/verify", {
     method: "POST",
     body: JSON.stringify({ password }),
   });
@@ -93,27 +95,25 @@ export async function devListSchools(devPassword) {
   const schools = await request("/api/dev/schools", {
     headers: { "x-dev-password": devPassword },
   });
-  return schools.map(withId);
+  return schools.map((s) => ({ ...s, id: s._id }));
 }
 
 export async function devCreateSchool(devPassword, school) {
-  return withId(
-    await request("/api/dev/schools", {
-      method: "POST",
-      headers: { "x-dev-password": devPassword },
-      body: JSON.stringify(school),
-    })
-  );
+  const created = await request("/api/dev/schools", {
+    method: "POST",
+    headers: { "x-dev-password": devPassword },
+    body: JSON.stringify(school),
+  });
+  return { ...created, id: created._id };
 }
 
 export async function devUpdateSchool(devPassword, id, school) {
-  return withId(
-    await request(`/api/dev/schools/${id}`, {
-      method: "PUT",
-      headers: { "x-dev-password": devPassword },
-      body: JSON.stringify(school),
-    })
-  );
+  const updated = await request(`/api/dev/schools/${id}`, {
+    method: "PUT",
+    headers: { "x-dev-password": devPassword },
+    body: JSON.stringify(school),
+  });
+  return { ...updated, id: updated._id };
 }
 
 export async function devDeleteSchool(devPassword, id) {

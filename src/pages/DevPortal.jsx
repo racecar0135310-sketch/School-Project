@@ -1,129 +1,67 @@
 import React, { useEffect, useState } from "react";
+import AccessGate from "../components/AccessGate.jsx";
 import {
-  devLogin,
   devListSchools,
   devCreateSchool,
   devUpdateSchool,
   devDeleteSchool,
 } from "../lib/storage.js";
-import AccessGate from "../components/AccessGate.jsx";
 
-const SESSION_KEY = "dev-access";
-const emptyForm = {
-  slug: "",
-  name: "",
-  address: "",
-  phone: "",
-  logoLeft: "",
-  logoRight: "",
-  generalCode: "",
-  adminPassword: "",
-};
+const DEV_SESSION_KEY = "dev-access-password";
+const emptyForm = { name: "", address: "", phone: "", diaryCode: "", adminPassword: "" };
 
-export default function DevPortal() {
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === "true");
-  const [devPassword, setDevPassword] = useState(() => sessionStorage.getItem(SESSION_KEY + "-pw") || "");
-
-  if (!unlocked) {
-    return (
-      <AccessGate
-        title="Developer Portal"
-        subtitle="Manage every school from here."
-        placeholder="Enter dev password"
-        onVerify={async (password) => {
-          const ok = await devLogin(password);
-          if (ok) {
-            // Save the password we just verified directly here, using the
-            // value passed into this function — not the component's
-            // `devPassword` state variable, since reading that state right
-            // after calling its setter would give back the OLD value.
-            sessionStorage.setItem(SESSION_KEY + "-pw", password);
-            setDevPassword(password);
-          }
-          return ok;
-        }}
-        onSuccess={() => {
-          sessionStorage.setItem(SESSION_KEY, "true");
-          setUnlocked(true);
-        }}
-      />
-    );
-  }
-
-  return <DevEditor devPassword={devPassword} />;
-}
-
-function DevEditor({ devPassword }) {
+export default function DevPortalPage() {
+  // The dev password itself is kept only in sessionStorage on this device —
+  // it's never hardcoded in the source. Every dev API call sends it fresh
+  // and the server checks it against the DEV_PASSWORD environment variable.
+  const [devPassword, setDevPassword] = useState(
+    () => sessionStorage.getItem(DEV_SESSION_KEY) || ""
+  );
   const [schools, setSchools] = useState([]);
-  const [form, setForm] = useState(emptyForm);
-  const [editingId, setEditingId] = useState(null);
-  // Bumped every time the form should reset to blank/fresh fields. Used as
-  // part of the form's `key` below so the browser fully remounts the inputs
-  // (clearing them for real) instead of us trying to fight autofill by
-  // setting React state that the DOM may not visually reflect.
-  const [formKey, setFormKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [revealedId, setRevealedId] = useState(null);
 
-  const refresh = async () => {
+  const refresh = async (pwd) => {
     try {
       setError("");
-      setSchools(await devListSchools(devPassword));
+      const list = await devListSchools(pwd);
+      setSchools(list);
     } catch (err) {
-      setError("Couldn't load schools.");
+      setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (devPassword) refresh(devPassword);
+  }, [devPassword]);
 
   const resetForm = () => {
     setForm(emptyForm);
     setEditingId(null);
-    setFormKey((k) => k + 1); // remount inputs so they're guaranteed blank
   };
 
-  // Reads straight from the actual <form> element's inputs at submit time —
-  // this is what the browser is really showing, regardless of whether an
-  // autofill or password manager updated the DOM without React noticing.
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const data = new FormData(e.target);
-    const get = (key) => (data.get(key) || "").toString().trim();
-
-    const payload = {
-      slug: get("slug"),
-      name: get("name"),
-      address: get("address"),
-      phone: get("phone"),
-      logoLeft: get("logoLeft"),
-      logoRight: get("logoRight"),
-      generalCode: get("generalCode"),
-      adminPassword: get("adminPassword"),
-    };
-
-    if (!payload.slug || !payload.name || !payload.generalCode || !payload.adminPassword) {
-      setError("Slug, name, general code and admin password are all required.");
-      return;
-    }
+    if (!form.name.trim() || !form.diaryCode.trim() || !form.adminPassword.trim()) return;
 
     setSubmitting(true);
     setError("");
     try {
       if (editingId) {
-        await devUpdateSchool(devPassword, editingId, payload);
+        await devUpdateSchool(devPassword, editingId, form);
       } else {
-        await devCreateSchool(devPassword, payload);
+        await devCreateSchool(devPassword, form);
       }
-      await refresh();
+      await refresh(devPassword);
       resetForm();
     } catch (err) {
-      setError(err.message || "Couldn't save that school.");
+      setError("Couldn't save that — please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -132,37 +70,60 @@ function DevEditor({ devPassword }) {
   const handleEdit = (s) => {
     setEditingId(s.id);
     setForm({
-      slug: s.slug,
       name: s.name,
       address: s.address || "",
       phone: s.phone || "",
-      logoLeft: s.logoLeft || "",
-      logoRight: s.logoRight || "",
-      generalCode: s.generalCode,
+      diaryCode: s.diaryCode,
       adminPassword: s.adminPassword,
     });
-    setFormKey((k) => k + 1); // remount so the defaultValues below take effect
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this school and ALL of its incharges? This can't be undone.")) return;
+    if (
+      !window.confirm(
+        "Delete this school and all of its saved incharges? This can't be undone."
+      )
+    ) {
+      return;
+    }
     setError("");
     try {
       await devDeleteSchool(devPassword, id);
       if (editingId === id) resetForm();
-      await refresh();
+      await refresh(devPassword);
     } catch (err) {
-      setError("Couldn't delete that school.");
+      setError("Couldn't delete that — please try again.");
     }
   };
+
+  if (!devPassword) {
+    return (
+      <AccessGate
+        title="Dev Portal"
+        subtitle="Manage every school's diary code and admin password."
+        onVerify={async (password) => {
+          // devListSchools itself checks the password server-side (via the
+          // x-dev-password header) — a successful response IS the proof
+          // it's correct, so we reuse that call instead of a separate
+          // verify endpoint.
+          await devListSchools(password);
+          return true;
+        }}
+        placeholder="Enter dev password"
+        onSuccess={(password) => {
+          sessionStorage.setItem(DEV_SESSION_KEY, password);
+          setDevPassword(password);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="bg-slate-900 text-white py-4 px-4 sm:px-6 shadow">
-        <h1 className="text-base sm:text-lg font-semibold">Developer Portal</h1>
+        <h1 className="text-base sm:text-lg font-semibold">Dev Portal — All Schools</h1>
         <p className="text-xs sm:text-sm text-slate-300">
-          Add, edit or remove schools. Each school's diary link is /&lt;slug&gt; and its
-          admin link is /&lt;slug&gt;/admin.
+          Add schools, and set or change each one's diary code and admin password.
         </p>
       </header>
 
@@ -173,64 +134,42 @@ function DevEditor({ devPassword }) {
           </div>
         )}
 
-        <form
-          key={formKey}
-          onSubmit={handleSubmit}
-          className="bg-white rounded-lg shadow p-5 space-y-3"
-        >
+        <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-5 space-y-3">
           <h2 className="font-semibold text-slate-800">
             {editingId ? "Edit school" : "Add a new school"}
           </h2>
           <div className="grid grid-cols-2 gap-3">
             <Field
-              name="slug"
-              label="Slug (used in the URL)"
-              defaultValue={form.slug}
-              placeholder="e.g. minhaj-girls"
-            />
-            <Field
-              name="name"
               label="School name"
-              defaultValue={form.name}
+              value={form.name}
+              onChange={(v) => setForm((f) => ({ ...f, name: v }))}
               placeholder="e.g. Minhaj-ul-Quran Girls School"
+              full
             />
-            <div className="col-span-2">
-              <Field
-                name="address"
-                label="Address"
-                defaultValue={form.address}
-                placeholder="e.g. Gulfishan Colony, Jhang Road, Faisalabad"
-              />
-            </div>
             <Field
-              name="phone"
+              label="Address"
+              value={form.address}
+              onChange={(v) => setForm((f) => ({ ...f, address: v }))}
+              placeholder="e.g. Gulfishan Colony, Jhang Road, Faisalabad"
+              full
+            />
+            <Field
               label="Phone"
-              defaultValue={form.phone}
+              value={form.phone}
+              onChange={(v) => setForm((f) => ({ ...f, phone: v }))}
               placeholder="e.g. (041-265 1699-265 1290)"
-            />
-            <div />
-            <Field
-              name="logoLeft"
-              label="Left logo URL (optional)"
-              defaultValue={form.logoLeft}
-              placeholder="https://…"
+              full
             />
             <Field
-              name="logoRight"
-              label="Right logo URL (optional)"
-              defaultValue={form.logoRight}
-              placeholder="https://…"
-            />
-            <Field
-              name="generalCode"
               label="Diary access code"
-              defaultValue={form.generalCode}
+              value={form.diaryCode}
+              onChange={(v) => setForm((f) => ({ ...f, diaryCode: v }))}
               placeholder="e.g. 135135"
             />
             <Field
-              name="adminPassword"
-              label="Admin password"
-              defaultValue={form.adminPassword}
+              label="Admin portal password"
+              value={form.adminPassword}
+              onChange={(v) => setForm((f) => ({ ...f, adminPassword: v }))}
               placeholder="e.g. Mutahhar@135"
             />
           </div>
@@ -266,8 +205,25 @@ function DevEditor({ devPassword }) {
                 <div key={s.id} className="py-3 flex items-start justify-between gap-3">
                   <div>
                     <p className="font-medium text-slate-800">{s.name}</p>
-                    <p className="text-xs text-slate-500">
-                      /{s.slug} · code {s.generalCode} · admin password {s.adminPassword}
+                    <p className="text-xs text-slate-500">{s.address}</p>
+                    <p className="text-xs text-slate-500">{s.phone}</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {revealedId === s.id ? (
+                        <>
+                          Code: <span className="font-mono">{s.diaryCode}</span> · Admin
+                          password: <span className="font-mono">{s.adminPassword}</span>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setRevealedId(s.id)}
+                          className="underline hover:text-slate-600"
+                        >
+                          Show code &amp; password
+                        </button>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Diary link: {window.location.origin}/school/{s.id}
                     </p>
                   </div>
                   <div className="flex gap-3 text-sm shrink-0">
@@ -294,15 +250,15 @@ function DevEditor({ devPassword }) {
   );
 }
 
-function Field({ name, label, defaultValue, placeholder }) {
+function Field({ label, value, onChange, placeholder, full }) {
   return (
-    <label className="block">
+    <label className={`block ${full ? "col-span-2" : ""}`}>
       <span className="text-xs font-medium text-slate-500">{label}</span>
       <input
-        name={name}
-        defaultValue={defaultValue}
         className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+        value={value}
         placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
       />
     </label>
   );
