@@ -22,7 +22,7 @@ const DUROOD_2 =
   "اَللّٰهُمَّ بَارِکْ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا بَارَکْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
 
 // The diary is always laid out at this pixel width internally, so the
-// downloaded image is identical quality no matter what device generated it.
+// downloaded image is identical quality no matter what device generated it. message, to basically,
 // On screen it's scaled down to fit — see ResponsiveDiaryFrame below.
 const DIARY_WIDTH = 560;
 
