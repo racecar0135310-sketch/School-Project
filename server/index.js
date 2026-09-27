@@ -169,7 +169,23 @@ app.post("/api/dev/schools", requireDevAuth, async (req, res) => {
     });
     res.status(201).json(school);
   } catch (err) {
-    res.status(500).json({ error: "Failed to create school." });
+    // Log the full error server-side (visible in your Render logs) and, on
+    // this password-protected dev route, also send it back in the response
+    // so it shows up directly in the browser's Network tab — no need to go
+    // dig through server logs to see what actually went wrong.
+    console.error("POST /api/dev/schools failed:", err);
+    if (err.code === 11000) {
+      // A unique index rejected the write — almost always a diary code or
+      // school name that's already used by another school.
+      const field = Object.keys(err.keyPattern || {})[0] || "field";
+      return res
+        .status(409)
+        .json({ error: `That ${field} is already used by another school.` });
+    }
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: `Failed to create school: ${err.message}` });
   }
 });
 
@@ -195,7 +211,17 @@ app.put("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
     if (!school) return res.status(404).json({ error: "School not found." });
     res.json(school);
   } catch (err) {
-    res.status(500).json({ error: "Failed to update school." });
+    console.error("PUT /api/dev/schools/:id failed:", err);
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyPattern || {})[0] || "field";
+      return res
+        .status(409)
+        .json({ error: `That ${field} is already used by another school.` });
+    }
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: `Failed to update school: ${err.message}` });
   }
 });
 
@@ -278,4 +304,25 @@ app.delete("/api/teachers/:id", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`API server listening on port ${PORT}`);
+});
+
+// Global error handler — catches anything that throws before a route's own
+// try/catch gets a chance, most importantly body-parser rejecting a request
+// (e.g. a logo upload pushing the JSON body over the size limit, or
+// malformed JSON). Without this, Express's default handler sends back a
+// plain HTML error page instead of JSON, which the frontend's `request()`
+// helper can't parse — so it silently falls back to a generic "Request
+// failed" message with no useful detail anywhere. This must be registered
+// last, after every other app.use()/route.
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({
+      error: "That upload is too large — please use a smaller image for the logo.",
+    });
+  }
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Malformed request." });
+  }
+  res.status(500).json({ error: `Server error: ${err.message}` });
 });
