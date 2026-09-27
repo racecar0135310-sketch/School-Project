@@ -29,7 +29,24 @@ if (!DEV_PASSWORD) {
 
 mongoose
   .connect(MONGODB_URI)
-  .then(() => console.log("Connected to MongoDB"))
+  .then(async () => {
+    console.log("Connected to MongoDB");
+    // Bring the collections' actual indexes in line with what the schemas
+    // declare today — this drops any stale index left over from an earlier
+    // version of a schema (e.g. an old unique "slug" index that no longer
+    // has a matching field) and creates any that are missing. Without this,
+    // a leftover unique index on a field the app no longer sets can make
+    // every new document after the first one collide on that field's
+    // shared "missing value", and every write fails with a 409 that has
+    // nothing to do with your actual data.
+    try {
+      await School.syncIndexes();
+      await Teacher.syncIndexes();
+      console.log("Indexes synced");
+    } catch (err) {
+      console.error("Failed to sync indexes:", err);
+    }
+  })
   .catch((err) => {
     console.error("Failed to connect to MongoDB:", err.message);
     process.exit(1);
