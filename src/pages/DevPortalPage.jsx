@@ -8,7 +8,30 @@ import {
 } from "../lib/storage.js";
 
 const DEV_SESSION_KEY = "dev-access-password";
-const emptyForm = { name: "", address: "", phone: "", diaryCode: "", adminPassword: "" };
+const emptyForm = {
+  name: "",
+  address: "",
+  phone: "",
+  diaryCode: "",
+  adminPassword: "",
+  leftLogo: "",
+  rightLogo: "",
+};
+
+// Reads a chosen image file into a base64 data URI, so it can be sent to
+// the server as plain JSON and stored straight on the School document — no
+// separate file upload endpoint or storage bucket needed. Any image format
+// the browser can decode (PNG, JPG, SVG, WEBP, etc.) works, and whatever
+// width/height ratio it comes in is fine — the diary always fits it into a
+// fixed box on its own, without stretching it.
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Couldn't read that file."));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function DevPortalPage() {
   // The dev password itself is kept only in sessionStorage on this device —
@@ -24,6 +47,7 @@ export default function DevPortalPage() {
   const [editingId, setEditingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [revealedId, setRevealedId] = useState(null);
+  const [logoError, setLogoError] = useState("");
 
   const refresh = async (pwd) => {
     try {
@@ -44,6 +68,7 @@ export default function DevPortalPage() {
   const resetForm = () => {
     setForm(emptyForm);
     setEditingId(null);
+    setLogoError("");
   };
 
   const handleSubmit = async (e) => {
@@ -69,13 +94,38 @@ export default function DevPortalPage() {
 
   const handleEdit = (s) => {
     setEditingId(s.id);
+    setLogoError("");
     setForm({
       name: s.name,
       address: s.address || "",
       phone: s.phone || "",
       diaryCode: s.diaryCode,
       adminPassword: s.adminPassword,
+      leftLogo: s.leftLogo || "",
+      rightLogo: s.rightLogo || "",
     });
+  };
+
+  const handleLogoUpload = async (key, file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setLogoError("Please choose an image file for the logo.");
+      return;
+    }
+    // 2MB keeps the request body (and the DB document) comfortably small —
+    // logos don't need to be any bigger than that to look sharp at the size
+    // they're shown on the diary.
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError("That logo is too large — please use an image under 2MB.");
+      return;
+    }
+    setLogoError("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setForm((f) => ({ ...f, [key]: dataUrl }));
+    } catch (err) {
+      setLogoError("Couldn't read that file — please try another image.");
+    }
   };
 
   const handleDelete = async (id) => {
@@ -173,6 +223,31 @@ export default function DevPortalPage() {
               placeholder="e.g. Mutahhar@135"
             />
           </div>
+
+          <div>
+            <p className="text-xs font-medium text-slate-500 mb-1">Diary logos</p>
+            <p className="text-[11px] text-slate-400 mb-2">
+              Upload the left and right logos shown on the diary header. Any image
+              format and any width/height ratio works — the diary fits each one
+              into its logo space automatically without stretching it.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <LogoField
+                label="Left logo"
+                value={form.leftLogo}
+                onUpload={(file) => handleLogoUpload("leftLogo", file)}
+                onRemove={() => setForm((f) => ({ ...f, leftLogo: "" }))}
+              />
+              <LogoField
+                label="Right logo"
+                value={form.rightLogo}
+                onUpload={(file) => handleLogoUpload("rightLogo", file)}
+                onRemove={() => setForm((f) => ({ ...f, rightLogo: "" }))}
+              />
+            </div>
+            {logoError && <p className="text-xs text-red-600 mt-1.5">{logoError}</p>}
+          </div>
+
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
@@ -203,7 +278,12 @@ export default function DevPortalPage() {
             <div className="divide-y divide-slate-100">
               {schools.map((s) => (
                 <div key={s.id} className="py-3 flex items-start justify-between gap-3">
-                  <div>
+                  <div className="flex items-start gap-3">
+                    <div className="flex gap-1 shrink-0">
+                      <LogoThumb src={s.leftLogo} />
+                      <LogoThumb src={s.rightLogo} />
+                    </div>
+                    <div>
                     <p className="font-medium text-slate-800">{s.name}</p>
                     <p className="text-xs text-slate-500">{s.address}</p>
                     <p className="text-xs text-slate-500">{s.phone}</p>
@@ -225,6 +305,7 @@ export default function DevPortalPage() {
                     <p className="text-[11px] text-slate-400 mt-1">
                       Diary link: {window.location.origin}/school/{s.id}
                     </p>
+                    </div>
                   </div>
                   <div className="flex gap-3 text-sm shrink-0">
                     <button
@@ -261,5 +342,69 @@ function Field({ label, value, onChange, placeholder, full }) {
         onChange={(e) => onChange(e.target.value)}
       />
     </label>
+  );
+}
+
+// A tiny read-only preview used in the schools list, so it's easy to
+// confirm which logos are saved without opening Edit.
+function LogoThumb({ src }) {
+  return (
+    <div className="w-8 h-8 border border-slate-200 rounded bg-white flex items-center justify-center overflow-hidden">
+      {src ? (
+        <img src={src} alt="" className="w-full h-full object-contain" />
+      ) : (
+        <span className="text-[8px] text-slate-300">—</span>
+      )}
+    </div>
+  );
+}
+
+// A logo picker: shows a checkerboard-free preview box (so any aspect ratio
+// is easy to judge) with an upload button, and a small "Remove" link once a
+// logo is set. The chosen file is handed to the parent as-is; it's the
+// parent's job (via onUpload) to turn it into a data URI and store it.
+function LogoField({ label, value, onUpload, onRemove }) {
+  const inputId = `logo-${label.replace(/\s+/g, "-").toLowerCase()}`;
+  return (
+    <div className="block">
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <div className="mt-1 flex items-center gap-2">
+        <div className="w-14 h-14 shrink-0 border border-slate-300 rounded bg-white flex items-center justify-center overflow-hidden">
+          {value ? (
+            <img src={value} alt={`${label} preview`} className="w-full h-full object-contain" />
+          ) : (
+            <span className="text-[10px] text-slate-300 text-center px-1">No logo</span>
+          )}
+        </div>
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor={inputId}
+            className="text-xs font-medium text-emerald-700 hover:text-emerald-900 cursor-pointer"
+          >
+            {value ? "Change" : "Upload"}
+            <input
+              id={inputId}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                onUpload(file);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {value && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="text-xs text-red-500 hover:text-red-700 text-left"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

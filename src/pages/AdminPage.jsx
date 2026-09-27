@@ -11,7 +11,7 @@ import {
 } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 import ColorField from "../components/ColorField.jsx";
-import { DEFAULT_COLORS } from "../lib/colors.js";
+import { DEFAULT_COLORS } from "/lib/colors.js";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
 

@@ -7,7 +7,9 @@ import School from "./School.js";
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Raised from the default ~100kb so uploaded logos (sent as base64 data
+// URIs from the Dev Portal) fit comfortably in the request body.
+app.use(express.json({ limit: "10mb" }));
 
 const { MONGODB_URI, PORT = 4000, DEV_PASSWORD } = process.env;
 
@@ -61,7 +63,15 @@ app.post("/api/dev/verify", (req, res) => {
 // These deliberately never return diaryCode or adminPassword.
 // ---------------------------------------------------------------------
 function publicSchool(s) {
-  return { id: s._id, name: s.name, address: s.address, phone: s.phone, colors: s.colors };
+  return {
+    id: s._id,
+    name: s.name,
+    address: s.address,
+    phone: s.phone,
+    colors: s.colors,
+    leftLogo: s.leftLogo,
+    rightLogo: s.rightLogo,
+  };
 }
 
 app.get("/api/schools", async (req, res) => {
@@ -139,7 +149,7 @@ app.get("/api/dev/schools", requireDevAuth, async (req, res) => {
 
 app.post("/api/dev/schools", requireDevAuth, async (req, res) => {
   try {
-    const { name, address, phone, diaryCode, adminPassword } = req.body;
+    const { name, address, phone, diaryCode, adminPassword, leftLogo, rightLogo } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: "name is required." });
     if (!diaryCode || !diaryCode.trim())
       return res.status(400).json({ error: "diaryCode is required." });
@@ -152,6 +162,10 @@ app.post("/api/dev/schools", requireDevAuth, async (req, res) => {
       phone: (phone || "").trim(),
       diaryCode: diaryCode.trim(),
       adminPassword: adminPassword.trim(),
+      // Logos are optional — a school can be added without them and have
+      // them uploaded later by editing it from the Dev Portal.
+      leftLogo: leftLogo || "",
+      rightLogo: rightLogo || "",
     });
     res.status(201).json(school);
   } catch (err) {
@@ -161,7 +175,7 @@ app.post("/api/dev/schools", requireDevAuth, async (req, res) => {
 
 app.put("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
   try {
-    const { name, address, phone, diaryCode, adminPassword } = req.body;
+    const { name, address, phone, diaryCode, adminPassword, leftLogo, rightLogo } = req.body;
     const school = await School.findByIdAndUpdate(
       req.params.id,
       {
@@ -170,6 +184,11 @@ app.put("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
         phone: (phone || "").trim(),
         diaryCode: (diaryCode || "").trim(),
         adminPassword: (adminPassword || "").trim(),
+        // leftLogo/rightLogo are only overwritten when a value is actually
+        // sent, so leaving the upload fields untouched while editing other
+        // details (like the address) doesn't wipe out an existing logo.
+        ...(leftLogo !== undefined ? { leftLogo } : {}),
+        ...(rightLogo !== undefined ? { rightLogo } : {}),
       },
       { new: true, runValidators: true }
     );

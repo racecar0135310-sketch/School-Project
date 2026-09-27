@@ -21,6 +21,14 @@ const schoolSchema = new mongoose.Schema(
     // — set from this school's own Admin Portal (not the /dev portal).
     // Mixed rather than a strict sub-schema, since it's just four hex strings.
     colors: { type: mongoose.Schema.Types.Mixed, default: DEFAULT_COLORS },
+    // The two logos shown on the diary header (left + right), set from the
+    // Dev Portal when the school is added/edited. Stored as data URIs
+    // (base64) so no separate file storage/CDN is needed — logos are small
+    // and this keeps everything in one MongoDB document. Whatever aspect
+    // ratio is uploaded is fine: the diary always fits it into a fixed box
+    // with object-contain, so it's never stretched or distorted.
+    leftLogo: { type: String, default: "" },
+    rightLogo: { type: String, default: "" },
   },
   { timestamps: true }
 );

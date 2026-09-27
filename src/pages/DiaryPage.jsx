@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { toPng } from "html-to-image";
 import { loadTeachers, findTeacherByName, getSchool, verifyDiaryCode } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
-import { DEFAULT_COLORS } from "../lib/colors.js";
+import { DEFAULT_COLORS } from "/lib/colors.js";
 
 // Logos live in /public/logos so they load with a plain, absolute path —
 // this works the same in dev, build, and preview, with no bundler import needed.
@@ -399,16 +399,23 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subj
       }}
       className="p-5"
     >
-      {/* Header banner */}
+      {/* Header banner — each school's own logos, uploaded from the Dev
+          Portal. Both sit in a fixed-size white box with object-contain, so
+          whatever the source image's aspect ratio is, it's scaled to fit
+          without ever being stretched or cropped. Falls back to the
+          original Minhaj-ul-Quran logos for any school that hasn't had
+          logos uploaded yet. */}
       <div
         style={{ borderWidth: 2, borderStyle: "solid", borderColor: c.border, background: c.box }}
         className="rounded-2xl px-3 py-2 mb-3 flex items-center justify-between"
       >
-        <img
-          src={minhajUlQuranLogo}
-          alt="Minhaj-ul-Quran"
-          className="w-14 h-14 object-contain shrink-0"
-        />
+        <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
+          <img
+            src={school?.leftLogo || minhajUlQuranLogo}
+            alt={school?.name ? `${school.name} logo` : "School logo"}
+            className="w-full h-full object-contain"
+          />
+        </div>
         <div className="text-center flex-1">
           <h1 className="font-bold text-2xl leading-tight" style={{ color: c.text }}>{school?.name}</h1>
           <p className="text-xs" style={{ color: c.text }}>{school?.address}</p>
@@ -416,8 +423,8 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subj
         </div>
         <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
           <img
-            src={mesLogo}
-            alt="Minhaj Education Society"
+            src={school?.rightLogo || mesLogo}
+            alt={school?.name ? `${school.name} secondary logo` : "Secondary logo"}
             className="w-full h-full object-contain"
           />
         </div>
