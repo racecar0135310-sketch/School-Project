@@ -86,7 +86,10 @@ export default function DevPortalPage() {
       await refresh(devPassword);
       resetForm();
     } catch (err) {
-      setError("Couldn't save that — please try again.");
+      // Show the server's actual reason (e.g. "That diaryCode is already
+      // used by another school") instead of a generic message, so a
+      // conflict or validation problem is obvious instead of a dead end.
+      setError(err.message || "Couldn't save that — please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -142,7 +145,7 @@ export default function DevPortalPage() {
       if (editingId === id) resetForm();
       await refresh(devPassword);
     } catch (err) {
-      setError("Couldn't delete that — please try again.");
+      setError(err.message || "Couldn't delete that — please try again.");
     }
   };
 
