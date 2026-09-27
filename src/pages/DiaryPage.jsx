@@ -31,6 +31,27 @@ function todayDay() {
 let idCounter = 1;
 const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
 
+// The diary's four customizable colors, matching the four areas visible on
+// the template: the overall background, every border/grid line, the shaded
+// "boxes" (header banner, CLASS/SECTION/etc. labels, SUBJECT/DESCRIPTION
+// header row), and all of the text.
+const DEFAULT_COLORS = {
+  background: "#0b2545",
+  border: "#38bdf8",
+  box: "#123a67",
+  text: "#f1f5f9",
+};
+
+function loadStoredColors(schoolId) {
+  try {
+    const raw = localStorage.getItem(`diary-colors-${schoolId}`);
+    if (!raw) return DEFAULT_COLORS;
+    return { ...DEFAULT_COLORS, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_COLORS;
+  }
+}
+
 export default function DiaryPage() {
   const { schoolId } = useParams();
   const sessionKey = `diary-access-granted-${schoolId}`;
@@ -52,6 +73,29 @@ export default function DiaryPage() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [matched, setMatched] = useState(false);
+  // Remembered per school, so a teacher's chosen look stays put next visit.
+  const [colors, setColors] = useState(() => loadStoredColors(schoolId));
+
+  const updateColor = (key, value) => {
+    setColors((prev) => {
+      const next = { ...prev, [key]: value };
+      try {
+        localStorage.setItem(`diary-colors-${schoolId}`, JSON.stringify(next));
+      } catch {
+        // Storage full/unavailable — the picker still works for this visit.
+      }
+      return next;
+    });
+  };
+
+  const resetColors = () => {
+    setColors(DEFAULT_COLORS);
+    try {
+      localStorage.removeItem(`diary-colors-${schoolId}`);
+    } catch {
+      // ignore
+    }
+  };
 
   // previewRef points at a full-size (560px), off-screen copy of the diary —
   // this is what actually gets captured for the download, always at full
@@ -133,7 +177,7 @@ export default function DiaryPage() {
       // what's on screen, unlike html2canvas.
       const dataUrl = await toPng(previewRef.current, {
         pixelRatio: 3,
-        backgroundColor: "#0b2545",
+        backgroundColor: colors.background,
         cacheBust: true,
       });
       const link = document.createElement("a");
@@ -232,6 +276,40 @@ export default function DiaryPage() {
 
           <div>
             <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-slate-800">Colors</h2>
+              <button
+                onClick={resetColors}
+                className="text-xs font-medium text-slate-400 hover:text-slate-600"
+              >
+                Reset to default
+              </button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <ColorField
+                label="Background"
+                value={colors.background}
+                onChange={(v) => updateColor("background", v)}
+              />
+              <ColorField
+                label="Border"
+                value={colors.border}
+                onChange={(v) => updateColor("border", v)}
+              />
+              <ColorField
+                label="Boxes"
+                value={colors.box}
+                onChange={(v) => updateColor("box", v)}
+              />
+              <ColorField
+                label="Text"
+                value={colors.text}
+                onChange={(v) => updateColor("text", v)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold text-slate-800">Subjects &amp; homework</h2>
               <button
                 onClick={addSubject}
@@ -295,7 +373,7 @@ export default function DiaryPage() {
         <section className="lg:sticky lg:top-4 self-start">
           <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
           <ResponsiveDiaryFrame>
-            <DiaryPreview school={school} meta={meta} subjects={subjects} note={note} />
+            <DiaryPreview school={school} meta={meta} subjects={subjects} note={note} colors={colors} />
           </ResponsiveDiaryFrame>
         </section>
 
@@ -306,7 +384,7 @@ export default function DiaryPage() {
           aria-hidden="true"
           style={{ position: "absolute", top: 0, left: -99999, pointerEvents: "none" }}
         >
-          <DiaryPreview ref={previewRef} school={school} meta={meta} subjects={subjects} note={note} />
+          <DiaryPreview ref={previewRef} school={school} meta={meta} subjects={subjects} note={note} colors={colors} />
         </div>
       </main>
     </div>
@@ -375,25 +453,67 @@ function Field({ label, value, onChange, placeholder }) {
   );
 }
 
-// The diary itself, styled to match the school's printed template.
-const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subjects, note }, ref) {
+// A native <input type="color"> already gives a full RGB/HSV picker (with a
+// hex field) in every modern browser, so that's all this needs — plus the
+// hex value shown alongside it for anyone who wants to type an exact code.
+function ColorField({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <div className="mt-1 flex items-center gap-2 border border-slate-300 rounded px-1.5 py-1">
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-7 h-7 shrink-0 border-0 bg-transparent p-0 cursor-pointer"
+          title={`Pick a ${label.toLowerCase()} color`}
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full min-w-0 text-xs font-mono text-slate-600 focus:outline-none"
+          spellCheck={false}
+        />
+      </div>
+    </label>
+  );
+}
+
+// The diary itself, styled to match the school's printed template. Colors
+// come entirely from the `colors` prop now — background/border/box/text —
+// instead of the fixed Tailwind sky/slate shades this used to have baked in.
+const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subjects, note, colors }, ref) {
+  const c = colors || DEFAULT_COLORS;
   return (
     <div
       ref={ref}
-      style={{ background: "#0b2545", width: DIARY_WIDTH, fontFamily: "Georgia, 'Times New Roman', serif" }}
-      className="p-5 text-slate-100 border-4 border-sky-400 rounded-md"
+      style={{
+        background: c.background,
+        width: DIARY_WIDTH,
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        color: c.text,
+        borderWidth: 4,
+        borderStyle: "solid",
+        borderColor: c.border,
+        borderRadius: 6,
+      }}
+      className="p-5"
     >
       {/* Header banner */}
-      <div className="border-2 border-sky-400 rounded-2xl px-3 py-2 mb-3 flex items-center justify-between bg-[#123a67]">
+      <div
+        style={{ borderWidth: 2, borderStyle: "solid", borderColor: c.border, background: c.box }}
+        className="rounded-2xl px-3 py-2 mb-3 flex items-center justify-between"
+      >
         <img
           src={minhajUlQuranLogo}
           alt="Minhaj-ul-Quran"
           className="w-14 h-14 object-contain shrink-0"
         />
         <div className="text-center flex-1">
-          <h1 className="text-white font-bold text-2xl leading-tight">{school?.name}</h1>
-          <p className="text-xs text-sky-100">{school?.address}</p>
-          <p className="text-xs text-sky-100">{school?.phone}</p>
+          <h1 className="font-bold text-2xl leading-tight" style={{ color: c.text }}>{school?.name}</h1>
+          <p className="text-xs" style={{ color: c.text }}>{school?.address}</p>
+          <p className="text-xs" style={{ color: c.text }}>{school?.phone}</p>
         </div>
         <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
           <img
@@ -406,8 +526,8 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subj
 
       <p
         dir="rtl"
-        className="text-center mb-5 text-slate-100 font-semibold"
-        style={{ fontSize: 28, lineHeight: 1.4 }}
+        className="text-center mb-5 font-semibold"
+        style={{ fontSize: 28, lineHeight: 1.4, color: c.text }}
       >
         {BISMILLAH}
       </p>
@@ -417,52 +537,64 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subj
           long a label's text is (this is what previously let "INCHARGE"
           push its row's boxes wider than the CLASS/DATE rows above it). */}
       <div
-        className="border border-sky-700 text-sm mb-3"
-        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+        className="text-sm mb-3"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: c.border,
+        }}
       >
-        <GridCell bold shaded borderR borderB>CLASS</GridCell>
-        <GridCell borderR borderB>{meta.className}</GridCell>
-        <GridCell bold shaded borderR borderB>SECTION</GridCell>
-        <GridCell borderB>{meta.section}</GridCell>
+        <GridCell bold shaded borderR borderB colors={c}>CLASS</GridCell>
+        <GridCell borderR borderB colors={c}>{meta.className}</GridCell>
+        <GridCell bold shaded borderR borderB colors={c}>SECTION</GridCell>
+        <GridCell borderB colors={c}>{meta.section}</GridCell>
 
-        <GridCell bold shaded borderR borderB>DATE</GridCell>
-        <GridCell borderR borderB className="text-sky-300">{meta.date}</GridCell>
-        <GridCell bold shaded borderR borderB>DAY</GridCell>
-        <GridCell borderB className="text-sky-300">{meta.day}</GridCell>
+        <GridCell bold shaded borderR borderB colors={c}>DATE</GridCell>
+        <GridCell borderR borderB colors={c}>{meta.date}</GridCell>
+        <GridCell bold shaded borderR borderB colors={c}>DAY</GridCell>
+        <GridCell borderB colors={c}>{meta.day}</GridCell>
 
-        <GridCell bold shaded borderR>INCHARGE</GridCell>
-        <GridCell className="text-sky-300">{meta.incharge}</GridCell>
+        <GridCell bold shaded borderR colors={c}>INCHARGE</GridCell>
+        <GridCell colors={c}>{meta.incharge}</GridCell>
         <div />
         <div />
       </div>
 
-      <h2 className="text-center font-bold mb-2 text-white">DAILY HOME WORK DIARY</h2>
+      <h2 className="text-center font-bold mb-2" style={{ color: c.text }}>DAILY HOME WORK DIARY</h2>
 
       {/* Subjects grid — same shared-grid approach, 4 columns, with the
           description column spanning the remaining 3. */}
       <div
-        className="border border-sky-700 text-sm mb-2"
-        style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
+        className="text-sm mb-2"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: c.border,
+        }}
       >
-        <GridCell bold borderR borderB className="bg-sky-700 text-white">SUBJECT</GridCell>
-        <GridCell bold borderB span={3} className="bg-sky-700 text-white">DESCRIPTION</GridCell>
+        <GridCell bold borderR borderB shaded colors={c}>SUBJECT</GridCell>
+        <GridCell bold borderB span={3} shaded colors={c}>DESCRIPTION</GridCell>
 
         {subjects.map((row) => (
           <React.Fragment key={row.id}>
-            <GridCell bold borderR borderB tall className="text-slate-100">
+            <GridCell bold borderR borderB tall colors={c}>
               {row.subject || "\u00A0"}
             </GridCell>
-            <GridCell borderB span={3} tall wrap className="text-slate-100">
+            <GridCell borderB span={3} tall wrap colors={c}>
               {row.description}
             </GridCell>
           </React.Fragment>
         ))}
 
-        <GridCell bold borderR tall>NOTE</GridCell>
-        <GridCell span={3} tall wrap className="text-red-300">{note}</GridCell>
+        <GridCell bold borderR tall colors={c}>NOTE</GridCell>
+        <GridCell span={3} tall wrap colors={c}>{note}</GridCell>
       </div>
 
-      <div dir="rtl" className="text-center text-[13px] leading-7 text-slate-200 mt-3">
+      <div dir="rtl" className="text-center text-[13px] leading-7 mt-3" style={{ color: c.text }}>
         <p>{DUROOD_1}</p>
         <p>{DUROOD_2}</p>
       </div>
@@ -474,14 +606,22 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subj
 // (rather than derived from position) since that's simplest and safest with
 // spanning cells. Being a flex container itself (not needing a parent's
 // height as a percentage) keeps vertical centering correct on export too.
-function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, className = "", children }) {
+// `shaded` cells (the CLASS/SECTION/... labels and the SUBJECT/DESCRIPTION
+// header row) get the "boxes" color as their background; every cell's text
+// uses the single "text" color.
+function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, className = "", colors, children }) {
+  const c = colors || DEFAULT_COLORS;
   return (
     <div
-      style={{ gridColumn: `span ${span}` }}
+      style={{
+        gridColumn: `span ${span}`,
+        borderRight: borderR ? `1px solid ${c.border}` : undefined,
+        borderBottom: borderB ? `1px solid ${c.border}` : undefined,
+        background: shaded ? c.box : undefined,
+        color: c.text,
+      }}
       className={`flex items-center justify-center text-center px-2 ${
         tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
-      } ${borderR ? "border-r border-sky-700" : ""} ${borderB ? "border-b border-sky-700" : ""} ${
-        shaded ? "bg-[#173f6c] text-white" : ""
       } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
     >
       {children}
