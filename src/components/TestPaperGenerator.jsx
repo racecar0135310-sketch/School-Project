@@ -10,6 +10,29 @@ import {
 } from "../lib/testPaperLogic.js";
 import { downloadTestPaperDocx } from "../lib/testPaperDocx.js";
 
+// Same fallback logos the diary uses when a school hasn't uploaded its own —
+// keeps the test paper's header consistent with the diary everywhere.
+const DEFAULT_LEFT_LOGO = "/logos/minhaj-ul-quran-logo.png";
+const DEFAULT_RIGHT_LOGO = "/logos/minhaj-education-society-logo.png";
+
+// A piece of user-typed text isn't guaranteed to match the paper's overall
+// language (an English question can appear inside an Urdu paper, and vice
+// versa) — detecting the actual script keeps the live preview's alignment
+// and option-lettering consistent with what the downloaded .docx will show.
+const ARABIC_RANGE = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
+function detectLang(text, fallbackLang) {
+  if (!text) return fallbackLang;
+  return ARABIC_RANGE.test(text) ? "ur" : "en";
+}
+
+const ENGLISH_FONTS = ["Cambria", "Times New Roman", "Calibri", "Arial", "Georgia", "Verdana"];
+const URDU_FONTS = [
+  "Jameel Noori Nastaleeq",
+  "Alvi Nastaleeq",
+  "Nafees Nastaleeq",
+  "Fajer Noori Nastalique",
+];
+
 const T = {
   en: {
     langLabel: "Paper language",
@@ -23,6 +46,11 @@ const T = {
     subject: "Subject",
     time: "Total time",
     timePh: "e.g. 1 hour 30 min",
+    fontSectionTitle: "Font",
+    englishFontLabel: "English font",
+    urduFontLabel: "Urdu font",
+    fontSizeLabel: "Base font size (pt)",
+    fontHint: "Applies to the whole document — headings and labels scale with it.",
     parts: "Parts",
     addMcq: "+ Add MCQs part",
     addWritten: "+ Add subjective part",
@@ -66,6 +94,11 @@ const T = {
     subject: "مضمون",
     time: "کل وقت",
     timePh: "مثلاً 1 گھنٹہ 30 منٹ",
+    fontSectionTitle: "فونٹ",
+    englishFontLabel: "انگلش فونٹ",
+    urduFontLabel: "اردو فونٹ",
+    fontSizeLabel: "بنیادی فونٹ سائز (pt)",
+    fontHint: "پوری دستاویز پر لاگو ہوتا ہے — عنوانات اور لیبل اسی کے مطابق بڑے/چھوٹے ہوں گے۔",
     parts: "حصے",
     addMcq: "+ معروضی حصہ شامل کریں",
     addWritten: "+ انشائیہ حصہ شامل کریں",
@@ -103,10 +136,12 @@ export default function TestPaperGenerator({ school }) {
   const [lang, setLang] = useState("en");
   const t = T[lang];
   const [meta, setMeta] = useState({ testName: "", className: "", section: "", subject: "", totalTime: "" });
+  const [style, setStyle] = useState({ fontFamilyEn: "Cambria", fontFamilyUr: "Jameel Noori Nastaleeq", fontSize: 11 });
   const [parts, setParts] = useState(() => [newPart("mcq", "Objective Part"), newPart("written", "Subjective Part")]);
   const [generating, setGenerating] = useState(false);
 
   const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
+  const updateStyle = (key, value) => setStyle((s) => ({ ...s, [key]: value }));
 
   const updatePart = (id, patch) =>
     setParts((ps) => ps.map((p) => (p.id === id ? { ...p, ...(typeof patch === "function" ? patch(p) : patch) } : p)));
@@ -153,7 +188,7 @@ export default function TestPaperGenerator({ school }) {
   const handleDone = async () => {
     setGenerating(true);
     try {
-      await downloadTestPaperDocx({ school, lang, meta, parts });
+      await downloadTestPaperDocx({ school, lang, meta, parts, style });
     } finally {
       setGenerating(false);
     }
@@ -191,6 +226,31 @@ export default function TestPaperGenerator({ school }) {
             <Field label={t.section} value={meta.section} onChange={(v) => updateMeta("section", v)} />
             <Field label={t.subject} value={meta.subject} onChange={(v) => updateMeta("subject", v)} />
             <Field label={t.time} value={meta.totalTime} onChange={(v) => updateMeta("totalTime", v)} placeholder={t.timePh} />
+          </div>
+        </div>
+
+        <div>
+          <h2 className="font-semibold text-slate-800 mb-1">{t.fontSectionTitle}</h2>
+          <p className="text-[11px] text-slate-400 mb-3">{t.fontHint}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <SelectField
+              label={t.englishFontLabel}
+              value={style.fontFamilyEn}
+              onChange={(v) => updateStyle("fontFamilyEn", v)}
+              options={ENGLISH_FONTS}
+            />
+            <SelectField
+              label={t.urduFontLabel}
+              value={style.fontFamilyUr}
+              onChange={(v) => updateStyle("fontFamilyUr", v)}
+              options={URDU_FONTS}
+            />
+            <Field
+              label={t.fontSizeLabel}
+              type="number"
+              value={style.fontSize}
+              onChange={(v) => updateStyle("fontSize", Math.min(18, Math.max(8, Number(v) || 11)))}
+            />
           </div>
         </div>
 
@@ -244,7 +304,7 @@ export default function TestPaperGenerator({ school }) {
       {/* ---------------- LIVE PREVIEW ---------------- */}
       <section className="lg:sticky lg:top-4 self-start">
         <p className="text-xs text-slate-500 mb-2">{t.preview}</p>
-        <TestPaperPreview school={school} meta={meta} parts={parts} lang={lang} t={t} totalMarks={totalMarks} />
+        <TestPaperPreview school={school} meta={meta} parts={parts} lang={lang} t={t} totalMarks={totalMarks} style={style} />
       </section>
     </div>
   );
@@ -501,15 +561,41 @@ function Field({ label, value, onChange, placeholder, type = "text" }) {
   );
 }
 
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <select
+        className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-white"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 // ---------------------------------------------------------------------
 // Live preview — an A4-proportioned approximation of what the downloaded
 // .docx will contain. It's not pixel-identical to Word's own layout, but
-// every field, table, and instruction line matches 1:1 — Cambria for
-// English, 11pt for question/instruction text and 9pt for labels/values,
-// same as the exported document.
+// every field, table, and instruction line matches 1:1 — the chosen font
+// family/size, the Father Name/Invigilator boxes' extra width, the
+// left/right logos (with the same fallback the diary uses), and each
+// question's own detected language all mirror the exported document.
 // ---------------------------------------------------------------------
-function TestPaperPreview({ school, meta, parts, lang, t, totalMarks }) {
+function TestPaperPreview({ school, meta, parts, lang, t, totalMarks, style }) {
   const dir = lang === "ur" ? "rtl" : "ltr";
+  const fontFamily =
+    lang === "ur"
+      ? `'${style.fontFamilyUr}', 'Noto Nastaliq Urdu', serif`
+      : `'${style.fontFamilyEn}', Georgia, serif`;
+  const baseFontPx = (Number(style.fontSize) || 11) * 1.14; // rough pt->px preview scale, matches the old 12.5px default at 11pt
+
   return (
     <div
       dir={dir}
@@ -517,14 +603,14 @@ function TestPaperPreview({ school, meta, parts, lang, t, totalMarks }) {
       style={{
         width: 560,
         minHeight: 790,
-        fontFamily: lang === "ur" ? "'Noto Nastaliq Urdu', serif" : "Cambria, Georgia, serif",
-        fontSize: 12.5,
+        fontFamily,
+        fontSize: baseFontPx,
       }}
     >
       <div className="p-5">
         <div className="flex items-center justify-between mb-1">
           <div className="w-12 h-12 bg-slate-100 rounded flex items-center justify-center overflow-hidden shrink-0">
-            {school?.leftLogo && <img src={school.leftLogo} alt="" className="w-full h-full object-contain" />}
+            <img src={school?.leftLogo || DEFAULT_LEFT_LOGO} alt="" className="w-full h-full object-contain" />
           </div>
           <div className="text-center flex-1">
             <p className="font-bold text-base">{school?.name}</p>
@@ -532,7 +618,7 @@ function TestPaperPreview({ school, meta, parts, lang, t, totalMarks }) {
             <p className="text-[10px] text-slate-500">{school?.phone}</p>
           </div>
           <div className="w-12 h-12 bg-slate-100 rounded flex items-center justify-center overflow-hidden shrink-0">
-            {school?.rightLogo && <img src={school.rightLogo} alt="" className="w-full h-full object-contain" />}
+            <img src={school?.rightLogo || DEFAULT_RIGHT_LOGO} alt="" className="w-full h-full object-contain" />
           </div>
         </div>
 
@@ -540,24 +626,36 @@ function TestPaperPreview({ school, meta, parts, lang, t, totalMarks }) {
 
         <table className="w-full table-fixed border-collapse border border-slate-400 text-[11px] mb-3">
           <tbody>
-            <PreviewRow lang={lang} pairs={[[HL(lang, "Student Name", "طالب علم کا نام"), ""], [HL(lang, "Father Name", "والد کا نام"), ""]]} />
             <PreviewRow
               lang={lang}
               pairs={[
-                [HL(lang, "Roll No.", "رول نمبر"), ""],
-                [HL(lang, "Class", "کلاس"), meta.className],
-                [HL(lang, "Section", "سیکشن"), meta.section],
+                [HL(lang, "Student Name", "طالب علم کا نام"), "", "15%", "28%"],
+                [HL(lang, "Father Name", "والد کا نام"), "", "12%", "45%"],
               ]}
             />
             <PreviewRow
               lang={lang}
               pairs={[
-                [HL(lang, "Time", "وقت"), meta.totalTime],
-                [HL(lang, "Total Marks", "کل نمبر"), String(totalMarks)],
-                [HL(lang, "Obt. Marks", "حاصل کردہ نمبر"), ""],
+                [HL(lang, "Roll No.", "رول نمبر"), "", "17%", "19%"],
+                [HL(lang, "Class", "کلاس"), meta.className, "15%", "16%"],
+                [HL(lang, "Section", "سیکشن"), meta.section, "13%", "20%"],
               ]}
             />
-            <PreviewRow lang={lang} pairs={[[HL(lang, "Subject", "مضمون"), meta.subject], [HL(lang, "Invigilator", "نگران"), ""]]} />
+            <PreviewRow
+              lang={lang}
+              pairs={[
+                [HL(lang, "Time", "وقت"), meta.totalTime, "17%", "19%"],
+                [HL(lang, "Total Marks", "کل نمبر"), String(totalMarks), "15%", "16%"],
+                [HL(lang, "Obt. Marks", "حاصل کردہ نمبر"), "", "13%", "20%"],
+              ]}
+            />
+            <PreviewRow
+              lang={lang}
+              pairs={[
+                [HL(lang, "Subject", "مضمون"), meta.subject, "15%", "28%"],
+                [HL(lang, "Invigilator", "نگران"), "", "12%", "45%"],
+              ]}
+            />
           </tbody>
         </table>
 
@@ -578,10 +676,17 @@ function HL(lang, en, ur) {
 function PreviewRow({ pairs, lang }) {
   return (
     <tr dir={lang === "ur" ? "rtl" : "ltr"}>
-      {pairs.map(([label, val], i) => (
+      {pairs.map(([label, val, labelW, valW], i) => (
         <React.Fragment key={i}>
-          <td className="border border-slate-300 bg-slate-100 font-semibold px-1.5 py-1.5 text-center text-[9px]">{label}</td>
-          <td className="border border-slate-300 px-1.5 py-1.5 text-center text-[9px]">{val || "\u00A0"}</td>
+          <td
+            style={{ width: labelW }}
+            className="border border-slate-300 bg-slate-100 font-semibold px-1.5 py-1.5 text-center text-[9px]"
+          >
+            {label}
+          </td>
+          <td style={{ width: valW }} className="border border-slate-300 px-1.5 py-1.5 text-center text-[9px]">
+            {val || "\u00A0"}
+          </td>
         </React.Fragment>
       ))}
     </tr>
@@ -602,10 +707,11 @@ function PreviewPart({ part, lang }) {
 
 function PreviewSubPart({ subPart, type, isMcq, lang }) {
   const { prefix, verb, marksExpr, total } = partStatement(subPart, type, lang);
+  const verbLang = detectLang(verb, lang);
   return (
     <div className="mb-3">
       {subPart.title && <p className="font-semibold text-[11px] mb-1">{subPart.title}</p>}
-      <div className="flex items-baseline justify-between font-semibold mb-1.5 text-[11px]">
+      <div dir={verbLang === "ur" ? "rtl" : "ltr"} className="flex items-baseline justify-between font-semibold mb-1.5 text-[11px]">
         <span>
           {prefix} {verb}
         </span>
@@ -616,45 +722,51 @@ function PreviewSubPart({ subPart, type, isMcq, lang }) {
 
       {isMcq ? (
         <div className="space-y-2">
-          {subPart.questions.map((q, idx) => (
-            <div key={q.id}>
-              <p className="text-[11px] mb-1">
-                <span className="font-semibold">{idx + 1}. </span>
-                {q.text || "\u00A0"}
-              </p>
-              <div className={`grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] ${lang === "ur" ? "pr-4" : "pl-4"}`}>
-                {(lang === "ur"
-                  ? [["ب", q.options?.b], ["الف", q.options?.a], ["د", q.options?.d], ["ج", q.options?.c]]
-                  : [["A", q.options?.a], ["B", q.options?.b], ["C", q.options?.c], ["D", q.options?.d]]
-                ).map(([label, val], i) => (
-                  <span key={i}>
-                    <span className="font-semibold">{label}) </span>
-                    {val || "\u00A0"}
-                  </span>
-                ))}
+          {subPart.questions.map((q, idx) => {
+            const qLang = detectLang(q.text, lang);
+            return (
+              <div key={q.id} dir={qLang === "ur" ? "rtl" : "ltr"}>
+                <p className="text-[11px] mb-1">
+                  <span className="font-semibold">{idx + 1}. </span>
+                  {q.text || "\u00A0"}
+                </p>
+                <div className={`grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] ${qLang === "ur" ? "pr-4" : "pl-4"}`}>
+                  {(qLang === "ur"
+                    ? [["ب", q.options?.b], ["الف", q.options?.a], ["د", q.options?.d], ["ج", q.options?.c]]
+                    : [["A", q.options?.a], ["B", q.options?.b], ["C", q.options?.c], ["D", q.options?.d]]
+                  ).map(([label, val], i) => (
+                    <span key={i}>
+                      <span className="font-semibold">{label}) </span>
+                      {val || "\u00A0"}
+                    </span>
+                  ))}
+                </div>
+                {q.shape && (
+                  <div
+                    className="border border-dashed border-slate-400 rounded mt-1"
+                    style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
+                  />
+                )}
               </div>
-              {q.shape && (
-                <div
-                  className="border border-dashed border-slate-400 rounded mt-1"
-                  style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
-                />
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
-        <ol className={`text-[11px] ${lang === "ur" ? "pr-4" : "pl-4"}`} style={{ listStyle: "decimal" }}>
-          {subPart.questions.map((q) => (
-            <li key={q.id} className="mb-1">
-              {q.text || "\u00A0"}
-              {q.shape && (
-                <div
-                  className="border border-dashed border-slate-400 rounded mt-1"
-                  style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
-                />
-              )}
-            </li>
-          ))}
+        <ol className="text-[11px]" style={{ listStyle: "decimal" }}>
+          {subPart.questions.map((q) => {
+            const qLang = detectLang(q.text, lang);
+            return (
+              <li key={q.id} dir={qLang === "ur" ? "rtl" : "ltr"} className={`mb-1 ${qLang === "ur" ? "pr-4" : "pl-4"}`}>
+                {q.text || "\u00A0"}
+                {q.shape && (
+                  <div
+                    className="border border-dashed border-slate-400 rounded mt-1"
+                    style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>

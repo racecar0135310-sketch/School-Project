@@ -9,6 +9,7 @@ import {
   Packer,
   Paragraph,
   TextRun,
+  ImageRun,
   Table,
   TableRow,
   TableCell,
@@ -45,22 +46,71 @@ const CELL_MARGINS = { top: 60, bottom: 60, left: 90, right: 90 };
 const HEADER_FILL = "2F2F2F";
 const LABEL_FILL = "E7E7E7";
 
-const URDU_FONT = "Jameel Noori Nastaleeq"; // falls back to a system Nastaliq/Arabic font if absent
-const EN_FONT = "Cambria";
+// Same logos the diary falls back to when a school hasn't uploaded its own —
+// keeps the test paper's header consistent with the diary even before a
+// school customizes anything from the Dev Portal.
+const DEFAULT_LEFT_LOGO = "/logos/minhaj-ul-quran-logo.png";
+const DEFAULT_RIGHT_LOGO = "/logos/minhaj-education-society-logo.png";
 
-// Two font sizes, used consistently everywhere in the document (docx sizes
-// are in half-points, so 22 = 11pt and 18 = 9pt):
-//   MAIN_SIZE   — question text, instruction lines, option text: 11pt
-//   NORMAL_SIZE — labels/values, table headers, everything secondary: 9pt
-const MAIN_SIZE = 22; // 11pt
-const NORMAL_SIZE = 18; // 9pt
+// ---------------------------------------------------------------------
+// Theme: font family + base size are now configurable per document (set
+// from the generator's "Font" controls) instead of hard-coded. Every size
+// used anywhere in the document scales off this, so bumping the base size
+// enlarges headings/labels proportionally rather than just the questions.
+// ---------------------------------------------------------------------
+const DEFAULT_FONT_EN = "Cambria";
+const DEFAULT_FONT_UR = "Jameel Noori Nastaleeq";
+const DEFAULT_FONT_SIZE_PT = 11;
 
-function font(lang) {
-  return lang === "ur" ? URDU_FONT : EN_FONT;
+function buildTheme(style = {}) {
+  const sizePt = Number(style.fontSize) > 0 ? Number(style.fontSize) : DEFAULT_FONT_SIZE_PT;
+  const mainSize = Math.round(sizePt * 2); // half-points
+  const normalSize = Math.max(12, mainSize - 4); // ~2pt smaller, floor at 6pt
+  return {
+    fontEn: style.fontFamilyEn || DEFAULT_FONT_EN,
+    fontUr: style.fontFamilyUr || DEFAULT_FONT_UR,
+    mainSize,
+    normalSize,
+    scale: mainSize / (DEFAULT_FONT_SIZE_PT * 2),
+  };
 }
 
-function run(text, { bold = false, lang = "en", size = MAIN_SIZE, color } = {}) {
-  return new TextRun({ text: text ?? "", bold, font: font(lang), size, color, rightToLeft: lang === "ur" });
+function sz(basePt2, theme) {
+  // basePt2 is a half-point value tuned against the default 11pt base —
+  // scales it to match whatever base size the user picked.
+  return Math.max(8, Math.round(basePt2 * theme.scale));
+}
+
+function font(lang, theme) {
+  return lang === "ur" ? theme.fontUr : theme.fontEn;
+}
+
+// ---------------------------------------------------------------------
+// Script detection: user-typed text (questions, options, instruction
+// lines, meta fields) isn't guaranteed to match the paper's overall
+// language — a teacher may write an English question inside an Urdu
+// paper. Forcing that run/paragraph into RTL-Urdu mode is what caused the
+// exported Word file to visually reorder such lines (numbers and
+// punctuation jumping to the front/back). Detecting the *actual* script of
+// each piece of text and using that — rather than blindly trusting the
+// paper's overall language — keeps every paragraph internally consistent
+// (either fully LTR or fully RTL) so Word never has to reorder runs.
+// ---------------------------------------------------------------------
+const ARABIC_RANGE = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
+function detectLang(text, fallbackLang) {
+  if (!text) return fallbackLang;
+  return ARABIC_RANGE.test(text) ? "ur" : "en";
+}
+
+function run(text, { bold = false, lang = "en", size, theme, color } = {}) {
+  return new TextRun({
+    text: text ?? "",
+    bold,
+    font: font(lang, theme),
+    size: size ?? theme.mainSize,
+    color,
+    rightToLeft: lang === "ur",
+  });
 }
 
 function para(children, { align, lang = "en", spacing, border } = {}) {
@@ -77,7 +127,8 @@ function cellWidth(w) {
   return w !== undefined ? { size: Math.round(w), type: WidthType.DXA } : undefined;
 }
 
-function labelCell(text, lang, opts = {}) {
+function labelCell(text, lang, theme, opts = {}) {
+  const effLang = detectLang(text, lang);
   return new TableCell({
     width: cellWidth(opts.width),
     shading: { type: ShadingType.CLEAR, fill: LABEL_FILL },
@@ -85,55 +136,120 @@ function labelCell(text, lang, opts = {}) {
     margins: CELL_MARGINS,
     verticalAlign: VerticalAlign.CENTER,
     columnSpan: opts.span,
-    children: [para(run(text, { bold: true, lang, size: NORMAL_SIZE }), { align: AlignmentType.CENTER, lang })],
+    children: [
+      para(run(text, { bold: true, lang: effLang, size: theme.normalSize, theme }), {
+        align: AlignmentType.CENTER,
+        lang: effLang,
+      }),
+    ],
   });
 }
 
-function valueCell(text, lang, opts = {}) {
+function valueCell(text, lang, theme, opts = {}) {
+  const effLang = detectLang(text, lang);
   return new TableCell({
     width: cellWidth(opts.width),
     borders: CELL_BORDERS,
     margins: CELL_MARGINS,
     verticalAlign: VerticalAlign.CENTER,
     columnSpan: opts.span,
-    children: [para(run(text || " ", { lang, size: NORMAL_SIZE }), { align: AlignmentType.CENTER, lang })],
+    children: [
+      para(run(text || " ", { lang: effLang, size: theme.normalSize, theme }), {
+        align: AlignmentType.CENTER,
+        lang: effLang,
+      }),
+    ],
   });
 }
 
 // ---------------------------------------------------------------------
-// Header: school banner (name/address/phone, mirrors the diary's header)
-// plus the student/roll/class/time/marks details grid from the reference
-// paper format. `layout: FIXED` (rather than Word's default auto-fit) is
-// what makes every cell actually keep the width it was given, so the grid
-// renders as one complete rectangle — matching the reference image —
-// instead of Word quietly re-shrinking columns to fit their text.
+// Logo handling — mirrors the diary: each logo sits in its own fixed box
+// (object-contain style: scaled down to fit, never stretched or cropped),
+// with the school name centered between them. Falls back to the same two
+// default logos the diary uses when a school hasn't uploaded its own.
 // ---------------------------------------------------------------------
-function buildHeader({ school, meta, lang, totalMarks }) {
+function loadImageForDocx(src) {
+  return new Promise((resolve) => {
+    if (!src) return resolve(null);
+    fetch(src)
+      .then((res) => res.blob())
+      .then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          blob
+            .arrayBuffer()
+            .then((buffer) => {
+              resolve({ buffer, width: img.naturalWidth || 1, height: img.naturalHeight || 1 });
+            })
+            .finally(() => URL.revokeObjectURL(objectUrl));
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(null);
+        };
+        img.src = objectUrl;
+      })
+      .catch(() => resolve(null));
+  });
+}
+
+async function buildLogoParagraph(src, boxPx) {
+  const image = await loadImageForDocx(src);
+  if (!image) return new Paragraph({ children: [] });
+  const ratio = Math.min(boxPx / image.width, boxPx / image.height, 1) || 1;
+  const width = Math.max(1, Math.round(image.width * ratio));
+  const height = Math.max(1, Math.round(image.height * ratio));
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    children: [new ImageRun({ data: image.buffer, transformation: { width, height } })],
+  });
+}
+
+// ---------------------------------------------------------------------
+// Header: logo banner (left logo / school name & address / right logo —
+// same layout as the diary) plus the student/roll/class/time/marks details
+// grid from the reference paper format. `layout: FIXED` (rather than
+// Word's default auto-fit) is what makes every cell actually keep the
+// width it was given, so the grid renders as one complete rectangle —
+// matching the reference image — instead of Word quietly re-shrinking
+// columns to fit their text. The Father Name and Invigilator boxes are
+// intentionally given more width than their labels so they read as full,
+// generously-sized rectangles for someone to write in.
+// ---------------------------------------------------------------------
+async function buildHeader({ school, meta, lang, totalMarks, theme }) {
   const w = CONTENT_WIDTH;
-  const nameLine = para(run(school?.name || "", { bold: true, lang, size: 32 }), {
+
+  const nameLang = detectLang(school?.name, lang);
+  const addrLang = detectLang(school?.address, lang);
+  const phoneLang = detectLang(school?.phone, lang);
+  const nameLine = para(run(school?.name || "", { bold: true, lang: nameLang, size: sz(32, theme), theme }), {
     align: AlignmentType.CENTER,
-    lang,
+    lang: nameLang,
   });
-  const addrLine = para(run(school?.address || "", { lang, size: NORMAL_SIZE }), {
+  const addrLine = para(run(school?.address || "", { lang: addrLang, size: theme.normalSize, theme }), {
     align: AlignmentType.CENTER,
-    lang,
+    lang: addrLang,
   });
-  const phoneLine = para(run(school?.phone || "", { lang, size: NORMAL_SIZE }), {
+  const phoneLine = para(run(school?.phone || "", { lang: phoneLang, size: theme.normalSize, theme }), {
     align: AlignmentType.CENTER,
-    lang,
+    lang: phoneLang,
   });
 
+  const titleLang = detectLang(meta.testName, lang);
   const titleLine = meta.testName
-    ? para(run(meta.testName, { bold: true, lang, size: 26 }), {
+    ? para(run(meta.testName, { bold: true, lang: titleLang, size: sz(26, theme), theme }), {
         align: AlignmentType.CENTER,
-        lang,
+        lang: titleLang,
         spacing: { before: 120, after: 120 },
       })
     : null;
 
   // Details grid — 6 columns, 5 rows, matching the printed template. Left
   // side is filled by the student by hand; right side is filled from the
-  // teacher's form.
+  // teacher's form. Father Name and Invigilator get a noticeably wider
+  // value box than the others (0.45 vs the usual 0.33 of the row) since
+  // those are always hand-filled and benefit from the extra writing room.
   const time = meta.totalTime || " ";
   const total = String(totalMarks);
 
@@ -150,11 +266,38 @@ function buildHeader({ school, meta, lang, totalMarks }) {
           objMarks: "Obt. Marks", subject: "Subject", invigilator: "Invigilator",
         };
 
+  const lc = (text, opts) => labelCell(text, lang, theme, opts);
+  const vc = (text, opts) => valueCell(text, lang, theme, opts);
+
   const detailsRows = [
-    [labelCell(L.studentName, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.33 }), labelCell(L.fatherName, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.33 })],
-    [labelCell(L.rollNo, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.19 }), labelCell(L.className, lang, { width: w * 0.15 }), valueCell(meta.className, lang, { width: w * 0.16 }), labelCell(L.section, lang, { width: w * 0.13 }), valueCell(meta.section, lang, { width: w * 0.20 })],
-    [labelCell(L.time, lang, { width: w * 0.17 }), valueCell(time, lang, { width: w * 0.19 }), labelCell(L.totalMarks, lang, { width: w * 0.15 }), valueCell(total, lang, { width: w * 0.16 }), labelCell(L.objMarks, lang, { width: w * 0.13 }), valueCell("", lang, { width: w * 0.20 })],
-    [labelCell(L.subject, lang, { width: w * 0.17 }), valueCell(meta.subject, lang, { width: w * 0.33 }), labelCell(L.invigilator, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.33 })],
+    [
+      lc(L.studentName, { width: w * 0.15 }),
+      vc("", { width: w * 0.28 }),
+      lc(L.fatherName, { width: w * 0.12 }),
+      vc("", { width: w * 0.45 }),
+    ],
+    [
+      lc(L.rollNo, { width: w * 0.17 }),
+      vc("", { width: w * 0.19 }),
+      lc(L.className, { width: w * 0.15 }),
+      vc(meta.className, { width: w * 0.16 }),
+      lc(L.section, { width: w * 0.13 }),
+      vc(meta.section, { width: w * 0.20 }),
+    ],
+    [
+      lc(L.time, { width: w * 0.17 }),
+      vc(time, { width: w * 0.19 }),
+      lc(L.totalMarks, { width: w * 0.15 }),
+      vc(total, { width: w * 0.16 }),
+      lc(L.objMarks, { width: w * 0.13 }),
+      vc("", { width: w * 0.20 }),
+    ],
+    [
+      lc(L.subject, { width: w * 0.15 }),
+      vc(meta.subject, { width: w * 0.28 }),
+      lc(L.invigilator, { width: w * 0.12 }),
+      vc("", { width: w * 0.45 }),
+    ],
   ];
 
   // Urdu template mirrors the row order right-to-left; simplest faithful
@@ -170,9 +313,38 @@ function buildHeader({ school, meta, lang, totalMarks }) {
     rows,
   });
 
-  const bits = [nameLine];
-  if (school?.address) bits.push(addrLine);
-  if (school?.phone) bits.push(phoneLine);
+  // Logo banner — left logo / school name block / right logo, same layout
+  // the diary uses. Falls back to the diary's default logos when a school
+  // hasn't uploaded its own.
+  const LOGO_BOX_PX = 60;
+  const LOGO_COL_TWIPS = 1250;
+  const [leftLogoPara, rightLogoPara] = await Promise.all([
+    buildLogoParagraph(school?.leftLogo || DEFAULT_LEFT_LOGO, LOGO_BOX_PX),
+    buildLogoParagraph(school?.rightLogo || DEFAULT_RIGHT_LOGO, LOGO_BOX_PX),
+  ]);
+
+  const logoCell = (paragraph) =>
+    new TableCell({
+      width: cellWidth(LOGO_COL_TWIPS),
+      borders: NO_BORDERS,
+      verticalAlign: VerticalAlign.CENTER,
+      children: [paragraph],
+    });
+
+  const nameCell = new TableCell({
+    width: cellWidth(w - LOGO_COL_TWIPS * 2),
+    borders: NO_BORDERS,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [nameLine, ...(school?.address ? [addrLine] : []), ...(school?.phone ? [phoneLine] : [])],
+  });
+
+  const bannerTable = new Table({
+    width: { size: w, type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
+    rows: [new TableRow({ children: [logoCell(leftLogoPara), nameCell, logoCell(rightLogoPara)] })],
+  });
+
+  const bits = [bannerTable];
   if (titleLine) bits.push(titleLine);
   bits.push(detailsTable);
   return bits;
@@ -182,42 +354,52 @@ function buildHeader({ school, meta, lang, totalMarks }) {
 // MCQ (objective) part — each question sits on its own line, and its four
 // options are laid out in a compact 2x2 grid directly below it (rather
 // than a No./Question/A/B/C/D row-table), matching how MCQs are normally
-// set out on a printed paper.
+// set out on a printed paper. Each question's own language (not the
+// paper's) decides its alignment/direction/option-labels, so an English
+// question inside an Urdu paper (or vice versa) reads correctly instead of
+// having its words and numbering reordered.
 // ---------------------------------------------------------------------
-function buildMcqQuestions(subPart, lang) {
+function buildMcqQuestions(subPart, lang, theme) {
   const w = CONTENT_WIDTH;
-  const optLabels = lang === "ur" ? ["الف", "ب", "ج", "د"] : ["A", "B", "C", "D"];
   const indent = 260; // twips — options sit slightly indented under their question
-  const optColWidth = (w - indent) / 2;
 
   const nodes = [];
 
   subPart.questions.forEach((q, idx) => {
+    const qLang = detectLang(q.text, lang);
+    const optLabels = qLang === "ur" ? ["الف", "ب", "ج", "د"] : ["A", "B", "C", "D"];
+    const optColWidth = (w - indent) / 2;
+
     nodes.push(
       new Paragraph({
-        alignment: lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
-        bidirectional: lang === "ur",
+        alignment: qLang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+        bidirectional: qLang === "ur",
         spacing: { before: 160, after: 60 },
         children: [
-          run(`${idx + 1}. `, { bold: true, lang, size: MAIN_SIZE }),
-          run(q.text, { lang, size: MAIN_SIZE }),
+          run(`${idx + 1}. `, { bold: true, lang: qLang, size: theme.mainSize, theme }),
+          run(q.text, { lang: qLang, size: theme.mainSize, theme }),
         ],
       })
     );
 
-    const optCell = (label, text) =>
-      new TableCell({
+    const optCell = (label, text) => {
+      const optLang = detectLang(text, qLang);
+      return new TableCell({
         width: cellWidth(optColWidth),
         borders: NO_BORDERS,
         margins: { top: 20, bottom: 20, left: 40, right: 40 },
         verticalAlign: VerticalAlign.CENTER,
         children: [
           para(
-            [run(`${label}) `, { bold: true, lang, size: NORMAL_SIZE }), run(text || "", { lang, size: NORMAL_SIZE })],
-            { lang }
+            [
+              run(`${label}) `, { bold: true, lang: optLang, size: theme.normalSize, theme }),
+              run(text || "", { lang: optLang, size: theme.normalSize, theme }),
+            ],
+            { lang: optLang }
           ),
         ],
       });
+    };
 
     const pairs = [
       [optLabels[0], q.options?.a],
@@ -225,8 +407,8 @@ function buildMcqQuestions(subPart, lang) {
       [optLabels[2], q.options?.c],
       [optLabels[3], q.options?.d],
     ];
-    const row1 = lang === "ur" ? [pairs[1], pairs[0]] : [pairs[0], pairs[1]];
-    const row2 = lang === "ur" ? [pairs[3], pairs[2]] : [pairs[2], pairs[3]];
+    const row1 = qLang === "ur" ? [pairs[1], pairs[0]] : [pairs[0], pairs[1]];
+    const row2 = qLang === "ur" ? [pairs[3], pairs[2]] : [pairs[2], pairs[3]];
 
     nodes.push(
       new Table({
@@ -256,40 +438,46 @@ function buildMcqQuestions(subPart, lang) {
 
 // ---------------------------------------------------------------------
 // Written (subjective) part — a numbered list, restarting at 1 for every
-// sub-part via its own numbering reference.
+// sub-part via its own numbering reference. Each question's own detected
+// language decides its paragraph direction, same reasoning as the MCQs.
 // ---------------------------------------------------------------------
-function buildWrittenQuestions(subPart, lang, numberingRef) {
-  return subPart.questions.map((q) => {
-    const shapeBox = q.shape
-      ? new Paragraph({
-          border: { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER },
-          spacing: { before: 80, after: 120 },
-          children: [new TextRun({ text: "", break: SHAPE_LINES[q.shapeSize] || 3 })],
-        })
-      : null;
-    const qPara = new Paragraph({
-      numbering: { reference: numberingRef, level: 0 },
-      alignment: lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
-      bidirectional: lang === "ur",
-      spacing: { after: 100 },
-      children: [run(q.text, { lang, size: MAIN_SIZE })],
-    });
-    return shapeBox ? [qPara, shapeBox] : [qPara];
-  }).flat();
+function buildWrittenQuestions(subPart, lang, theme, numberingRef) {
+  return subPart.questions
+    .map((q) => {
+      const qLang = detectLang(q.text, lang);
+      const shapeBox = q.shape
+        ? new Paragraph({
+            border: { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER },
+            spacing: { before: 80, after: 120 },
+            children: [new TextRun({ text: "", break: SHAPE_LINES[q.shapeSize] || 3 })],
+          })
+        : null;
+      const qPara = new Paragraph({
+        numbering: { reference: numberingRef, level: 0 },
+        alignment: qLang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+        bidirectional: qLang === "ur",
+        spacing: { after: 100 },
+        children: [run(q.text, { lang: qLang, size: theme.mainSize, theme })],
+      });
+      return shapeBox ? [qPara, shapeBox] : [qPara];
+    })
+    .flat();
 }
 
-function buildPartHeading(part, lang) {
-  return para(run(part.title, { bold: true, lang, size: 24 }), {
+function buildPartHeading(part, lang, theme) {
+  const effLang = detectLang(part.title, lang);
+  return para(run(part.title, { bold: true, lang: effLang, size: sz(24, theme), theme }), {
     align: AlignmentType.CENTER,
-    lang,
+    lang: effLang,
     spacing: { before: 260, after: 80 },
   });
 }
 
-function buildSubPartHeading(subPart, lang) {
-  return para(run(subPart.title, { bold: true, lang, size: NORMAL_SIZE }), {
-    align: lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
-    lang,
+function buildSubPartHeading(subPart, lang, theme) {
+  const effLang = detectLang(subPart.title, lang);
+  return para(run(subPart.title, { bold: true, lang: effLang, size: theme.normalSize, theme }), {
+    align: effLang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+    lang: effLang,
     spacing: { before: 160, after: 40 },
   });
 }
@@ -297,23 +485,30 @@ function buildSubPartHeading(subPart, lang) {
 // Instruction line: "Q. <verb> (Any N):"   (marks x count)   /total
 // laid out as a 3-cell borderless table so the marks/total sit flush right
 // no matter how long the instruction text is, same as the printed original.
-function buildInstructionLine(subPart, type, lang) {
+// The verb's own detected language (not just the paper's) picks the font
+// and direction for that run, so an English instruction typed into an
+// Urdu paper doesn't get forced into Urdu-RTL rendering.
+function buildInstructionLine(subPart, type, lang, theme) {
   const { prefix, verb, marksExpr, total } = partStatement(subPart, type, lang);
+  const verbLang = detectLang(verb, lang);
   const w = CONTENT_WIDTH;
   const cell = (children, width, align) =>
     new TableCell({
       width: cellWidth(width),
       borders: NO_BORDERS,
       verticalAlign: VerticalAlign.CENTER,
-      children: [para(children, { align, lang })],
+      children: [para(children, { align, lang: verbLang })],
     });
 
-  const textChildren = [run(`${prefix} `, { bold: true, lang, size: MAIN_SIZE }), run(verb, { bold: true, lang, size: MAIN_SIZE })];
-  const marksChildren = [run(marksExpr, { bold: true, lang, size: MAIN_SIZE })];
-  const totalChildren = [run(`/${total}`, { bold: true, lang, size: MAIN_SIZE })];
+  const textChildren = [
+    run(`${prefix} `, { bold: true, lang: verbLang, size: theme.mainSize, theme }),
+    run(verb, { bold: true, lang: verbLang, size: theme.mainSize, theme }),
+  ];
+  const marksChildren = [run(marksExpr, { bold: true, lang: verbLang, size: theme.mainSize, theme })];
+  const totalChildren = [run(`/${total}`, { bold: true, lang: verbLang, size: theme.mainSize, theme })];
 
   const cells = [
-    cell(textChildren, w * 0.68, lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT),
+    cell(textChildren, w * 0.68, verbLang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT),
     cell(marksChildren, w * 0.17, AlignmentType.CENTER),
     cell(totalChildren, w * 0.15, AlignmentType.CENTER),
   ];
@@ -324,7 +519,8 @@ function buildInstructionLine(subPart, type, lang) {
   });
 }
 
-export async function buildTestPaperDocx({ school, lang, meta, parts }) {
+export async function buildTestPaperDocx({ school, lang, meta, parts, style }) {
+  const theme = buildTheme(style);
   const totalMarks = grandTotalMarks(parts);
 
   const numbering = {
@@ -347,19 +543,19 @@ export async function buildTestPaperDocx({ school, lang, meta, parts }) {
   };
 
   const body = [];
-  body.push(...buildHeader({ school, meta, lang, totalMarks }));
+  body.push(...(await buildHeader({ school, meta, lang, totalMarks, theme })));
 
   for (const part of parts) {
-    body.push(buildPartHeading(part, lang));
+    body.push(buildPartHeading(part, lang, theme));
 
     for (const subPart of part.subParts) {
-      if (subPart.title) body.push(buildSubPartHeading(subPart, lang));
-      body.push(buildInstructionLine(subPart, part.type, lang));
-      body.push(para(run("", { lang }), { lang, spacing: { after: 60 } }));
+      if (subPart.title) body.push(buildSubPartHeading(subPart, lang, theme));
+      body.push(buildInstructionLine(subPart, part.type, lang, theme));
+      body.push(para(run("", { lang, theme }), { lang, spacing: { after: 60 } }));
       if (part.type === "mcq") {
-        body.push(...buildMcqQuestions(subPart, lang));
+        body.push(...buildMcqQuestions(subPart, lang, theme));
       } else {
-        body.push(...buildWrittenQuestions(subPart, lang, `sub-${subPart.id}`));
+        body.push(...buildWrittenQuestions(subPart, lang, theme, `sub-${subPart.id}`));
       }
     }
   }
@@ -377,8 +573,8 @@ export async function buildTestPaperDocx({ school, lang, meta, parts }) {
   return Packer.toBlob(doc);
 }
 
-export async function downloadTestPaperDocx({ school, lang, meta, parts }) {
-  const blob = await buildTestPaperDocx({ school, lang, meta, parts });
+export async function downloadTestPaperDocx({ school, lang, meta, parts, style }) {
+  const blob = await buildTestPaperDocx({ school, lang, meta, parts, style });
   const safeName = (meta.testName || "test-paper").replace(/[^\w\-]+/g, "-");
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
