@@ -167,42 +167,61 @@ function valueCell(text, lang, theme, opts = {}) {
 // (object-contain style: scaled down to fit, never stretched or cropped),
 // with the school name centered between them. Falls back to the same two
 // default logos the diary uses when a school hasn't uploaded its own.
+//
+// Every logo is redrawn onto a canvas and re-exported as PNG before being
+// embedded, then handed to ImageRun with an explicit `type: "png"`. Both
+// of those matter: the Dev Portal accepts any image format a browser can
+// decode (JPG, WEBP, even SVG), but Word's docx format only recognizes a
+// fixed handful of image types — and critically, this version of the
+// `docx` package silently accepts a call with no `type` at all instead of
+// erroring, which produces a media file with an invalid ".undefined"
+// extension that Word can't open ("Word found unreadable content...",
+// forcing the "Recover" prompt). Re-encoding to PNG and always declaring
+// type: "png" means every logo, whatever format it was uploaded in, is
+// guaranteed to produce a file Word can actually read.
 // ---------------------------------------------------------------------
-function loadImageForDocx(src) {
+function loadImageForDocx(src, maxPx = 240) {
   return new Promise((resolve) => {
     if (!src) return resolve(null);
-    fetch(src)
-      .then((res) => res.blob())
-      .then((blob) => {
-        const objectUrl = URL.createObjectURL(blob);
-        const img = new Image();
-        img.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const naturalW = img.naturalWidth || 1;
+        const naturalH = img.naturalHeight || 1;
+        const scale = Math.min(1, maxPx / Math.max(naturalW, naturalH));
+        const canvasW = Math.max(1, Math.round(naturalW * scale));
+        const canvasH = Math.max(1, Math.round(naturalH * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = canvasW;
+        canvas.height = canvasH;
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvasW, canvasH);
+        ctx.drawImage(img, 0, 0, canvasW, canvasH);
+        canvas.toBlob((blob) => {
+          if (!blob) return resolve(null);
           blob
             .arrayBuffer()
-            .then((buffer) => {
-              resolve({ buffer, width: img.naturalWidth || 1, height: img.naturalHeight || 1 });
-            })
-            .finally(() => URL.revokeObjectURL(objectUrl));
-        };
-        img.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
-          resolve(null);
-        };
-        img.src = objectUrl;
-      })
-      .catch(() => resolve(null));
+            .then((buffer) => resolve({ buffer, width: canvasW, height: canvasH }))
+            .catch(() => resolve(null));
+        }, "image/png");
+      } catch (err) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
   });
 }
 
 async function buildLogoParagraph(src, boxPx) {
-  const image = await loadImageForDocx(src);
+  const image = await loadImageForDocx(src, boxPx * 3);
   if (!image) return new Paragraph({ children: [] });
   const ratio = Math.min(boxPx / image.width, boxPx / image.height, 1) || 1;
   const width = Math.max(1, Math.round(image.width * ratio));
   const height = Math.max(1, Math.round(image.height * ratio));
   return new Paragraph({
     alignment: AlignmentType.CENTER,
-    children: [new ImageRun({ data: image.buffer, transformation: { width, height } })],
+    children: [new ImageRun({ type: "png", data: image.buffer, transformation: { width, height } })],
   });
 }
 
