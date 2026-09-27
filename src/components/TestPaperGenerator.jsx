@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   newPart,
+  newSubPart,
   newQuestion,
   attemptCount,
   partTotalMarks,
@@ -26,6 +27,9 @@ const T = {
     addMcq: "+ Add MCQs part",
     addWritten: "+ Add subjective part",
     partTitle: "Part title",
+    subPartTitle: "Sub-part label (optional, e.g. Section A)",
+    addSubPart: "+ Add sub-part",
+    removeSubPart: "Remove sub-part",
     marksEach: "Marks per question",
     hasChoice: "There is choice (student attempts only some questions)",
     attemptCount: "How many must the student attempt?",
@@ -66,6 +70,9 @@ const T = {
     addMcq: "+ معروضی حصہ شامل کریں",
     addWritten: "+ انشائیہ حصہ شامل کریں",
     partTitle: "حصے کا عنوان",
+    subPartTitle: "ذیلی حصے کا لیبل (اختیاری، مثلاً سیکشن اے)",
+    addSubPart: "+ ذیلی حصہ شامل کریں",
+    removeSubPart: "ذیلی حصہ حذف کریں",
     marksEach: "فی سوال نمبر",
     hasChoice: "چوائس ہے (طالبعلم صرف کچھ سوالات حل کرے گا)",
     attemptCount: "طالبعلم کتنے سوال حل کرے گا؟",
@@ -112,17 +119,33 @@ export default function TestPaperGenerator({ school }) {
 
   const removePart = (id) => setParts((ps) => (ps.length > 1 ? ps.filter((p) => p.id !== id) : ps));
 
-  const addQuestion = (partId) =>
-    updatePart(partId, (p) => ({ questions: [...p.questions, newQuestion(p.type)] }));
-
-  const removeQuestion = (partId, qId) =>
+  // Every mutation below drills down: part -> subPart -> question.
+  const updateSubPart = (partId, subId, patch) =>
     updatePart(partId, (p) => ({
-      questions: p.questions.length > 1 ? p.questions.filter((q) => q.id !== qId) : p.questions,
+      subParts: p.subParts.map((sp) =>
+        sp.id === subId ? { ...sp, ...(typeof patch === "function" ? patch(sp) : patch) } : sp
+      ),
     }));
 
-  const updateQuestion = (partId, qId, patch) =>
+  const addSubPart = (partId, type) =>
+    updatePart(partId, (p) => ({ subParts: [...p.subParts, newSubPart(type)] }));
+
+  const removeSubPart = (partId, subId) =>
     updatePart(partId, (p) => ({
-      questions: p.questions.map((q) => (q.id === qId ? { ...q, ...patch } : q)),
+      subParts: p.subParts.length > 1 ? p.subParts.filter((sp) => sp.id !== subId) : p.subParts,
+    }));
+
+  const addQuestion = (partId, subId, type) =>
+    updateSubPart(partId, subId, (sp) => ({ questions: [...sp.questions, newQuestion(type)] }));
+
+  const removeQuestion = (partId, subId, qId) =>
+    updateSubPart(partId, subId, (sp) => ({
+      questions: sp.questions.length > 1 ? sp.questions.filter((q) => q.id !== qId) : sp.questions,
+    }));
+
+  const updateQuestion = (partId, subId, qId, patch) =>
+    updateSubPart(partId, subId, (sp) => ({
+      questions: sp.questions.map((q) => (q.id === qId ? { ...q, ...patch } : q)),
     }));
 
   const totalMarks = grandTotalMarks(parts);
@@ -192,9 +215,12 @@ export default function TestPaperGenerator({ school }) {
               t={t}
               onUpdate={(patch) => updatePart(part.id, patch)}
               onRemove={() => removePart(part.id)}
-              onAddQuestion={() => addQuestion(part.id)}
-              onRemoveQuestion={(qId) => removeQuestion(part.id, qId)}
-              onUpdateQuestion={(qId, patch) => updateQuestion(part.id, qId, patch)}
+              onAddSubPart={() => addSubPart(part.id, part.type)}
+              onUpdateSubPart={(subId, patch) => updateSubPart(part.id, subId, patch)}
+              onRemoveSubPart={(subId) => removeSubPart(part.id, subId)}
+              onAddQuestion={(subId) => addQuestion(part.id, subId, part.type)}
+              onRemoveQuestion={(subId, qId) => removeQuestion(part.id, subId, qId)}
+              onUpdateQuestion={(subId, qId, patch) => updateQuestion(part.id, subId, qId, patch)}
               canRemove={parts.length > 1}
             />
           ))}
@@ -224,7 +250,20 @@ export default function TestPaperGenerator({ school }) {
   );
 }
 
-function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemoveQuestion, onUpdateQuestion, canRemove }) {
+function PartEditor({
+  part,
+  lang,
+  t,
+  onUpdate,
+  onRemove,
+  onAddSubPart,
+  onUpdateSubPart,
+  onRemoveSubPart,
+  onAddQuestion,
+  onRemoveQuestion,
+  onUpdateQuestion,
+  canRemove,
+}) {
   const isMcq = part.type === "mcq";
   const dir = lang === "ur" ? "rtl" : "ltr";
 
@@ -251,12 +290,73 @@ function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemove
         )}
       </div>
 
+      <div className="space-y-3">
+        {part.subParts.map((subPart, spIdx) => (
+          <SubPartEditor
+            key={subPart.id}
+            subPart={subPart}
+            isMcq={isMcq}
+            lang={lang}
+            t={t}
+            index={spIdx}
+            onUpdate={(patch) => onUpdateSubPart(subPart.id, patch)}
+            onRemove={() => onRemoveSubPart(subPart.id)}
+            onAddQuestion={() => onAddQuestion(subPart.id)}
+            onRemoveQuestion={(qId) => onRemoveQuestion(subPart.id, qId)}
+            onUpdateQuestion={(qId, patch) => onUpdateQuestion(subPart.id, qId, patch)}
+            canRemove={part.subParts.length > 1}
+          />
+        ))}
+      </div>
+
+      <button onClick={onAddSubPart} className="text-sm font-medium text-emerald-700 hover:text-emerald-900">
+        {t.addSubPart}
+      </button>
+    </div>
+  );
+}
+
+// One sub-part: its own optional label, its own instruction line, its own
+// marks/choice settings, and its own list of questions. A part with a
+// single (unlabeled) sub-part looks exactly like a plain part always did;
+// adding more sub-parts is what lets one part be split into e.g. three
+// differently-instructed groups of questions.
+function SubPartEditor({
+  subPart,
+  isMcq,
+  lang,
+  t,
+  index,
+  onUpdate,
+  onRemove,
+  onAddQuestion,
+  onRemoveQuestion,
+  onUpdateQuestion,
+  canRemove,
+}) {
+  return (
+    <div className="border border-slate-100 bg-slate-50/60 rounded-md p-3 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold text-slate-400 shrink-0">#{index + 1}</span>
+        <input
+          className="flex-1 border border-slate-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600"
+          value={subPart.title}
+          onChange={(e) => onUpdate({ title: e.target.value })}
+          placeholder={t.subPartTitle}
+        />
+        {canRemove && (
+          <button onClick={onRemove} className="text-slate-400 hover:text-red-600 text-xs px-2" title={t.removeSubPart}>
+            ✕
+          </button>
+        )}
+      </div>
+
       <textarea
         className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
         rows={1}
-        value={part.instructionVerb[lang]}
+        value={subPart.instructionVerb[lang]}
         onChange={(e) =>
-          onUpdate({ instructionVerb: { ...part.instructionVerb, [lang]: e.target.value } })
+          onUpdate({ instructionVerb: { ...subPart.instructionVerb, [lang]: e.target.value } })
         }
       />
 
@@ -264,14 +364,14 @@ function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemove
         <Field
           label={t.marksEach}
           type="number"
-          value={part.marksPerQuestion}
+          value={subPart.marksPerQuestion}
           onChange={(v) => onUpdate({ marksPerQuestion: Number(v) || 0 })}
         />
         {!isMcq && (
           <label className="flex items-center gap-2 text-sm text-slate-600 mt-5">
             <input
               type="checkbox"
-              checked={part.hasChoice}
+              checked={subPart.hasChoice}
               onChange={(e) => onUpdate({ hasChoice: e.target.checked })}
             />
             {t.hasChoice}
@@ -279,17 +379,17 @@ function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemove
         )}
       </div>
 
-      {!isMcq && part.hasChoice && (
+      {!isMcq && subPart.hasChoice && (
         <Field
-          label={`${t.attemptCount} (${t.ofTotal(part.questions.length)})`}
+          label={`${t.attemptCount} (${t.ofTotal(subPart.questions.length)})`}
           type="number"
-          value={part.attemptCount}
+          value={subPart.attemptCount}
           onChange={(v) => onUpdate({ attemptCount: Number(v) || 0 })}
         />
       )}
 
       <div className="space-y-2">
-        {part.questions.map((q, idx) => (
+        {subPart.questions.map((q, idx) => (
           <QuestionEditor
             key={q.id}
             index={idx}
@@ -298,7 +398,7 @@ function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemove
             t={t}
             onUpdate={(patch) => onUpdateQuestion(q.id, patch)}
             onRemove={() => onRemoveQuestion(q.id)}
-            canRemove={part.questions.length > 1}
+            canRemove={subPart.questions.length > 1}
           />
         ))}
       </div>
@@ -308,8 +408,10 @@ function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemove
       </button>
 
       <p className="text-[11px] text-slate-400">
-        {partStatement(part, lang).prefix} {partStatement(part, lang).verb} {partStatement(part, lang).marksExpr} /
-        {partStatement(part, lang).total}
+        {partStatement(subPart, isMcq ? "mcq" : "written", lang).prefix}{" "}
+        {partStatement(subPart, isMcq ? "mcq" : "written", lang).verb}{" "}
+        {partStatement(subPart, isMcq ? "mcq" : "written", lang).marksExpr} /
+        {partStatement(subPart, isMcq ? "mcq" : "written", lang).total}
       </p>
     </div>
   );
@@ -317,7 +419,7 @@ function PartEditor({ part, lang, t, onUpdate, onRemove, onAddQuestion, onRemove
 
 function QuestionEditor({ index, question, isMcq, t, onUpdate, onRemove, canRemove }) {
   return (
-    <div className="border border-slate-100 rounded p-2 bg-slate-50 space-y-2">
+    <div className="border border-slate-100 rounded p-2 bg-white space-y-2">
       <div className="flex items-start gap-2">
         <span className="text-xs font-semibold text-slate-400 mt-2 w-5 shrink-0">{index + 1}.</span>
         <textarea
@@ -402,15 +504,22 @@ function Field({ label, value, onChange, placeholder, type = "text" }) {
 // ---------------------------------------------------------------------
 // Live preview — an A4-proportioned approximation of what the downloaded
 // .docx will contain. It's not pixel-identical to Word's own layout, but
-// every field, table, and instruction line matches 1:1.
+// every field, table, and instruction line matches 1:1 — Cambria for
+// English, 11pt for question/instruction text and 9pt for labels/values,
+// same as the exported document.
 // ---------------------------------------------------------------------
 function TestPaperPreview({ school, meta, parts, lang, t, totalMarks }) {
   const dir = lang === "ur" ? "rtl" : "ltr";
   return (
     <div
       dir={dir}
-      className="bg-white shadow border border-slate-300 mx-auto text-[12px] leading-snug"
-      style={{ width: 560, minHeight: 790, fontFamily: lang === "ur" ? "'Noto Nastaliq Urdu', serif" : "Georgia, serif" }}
+      className="bg-white shadow border border-slate-300 mx-auto leading-snug"
+      style={{
+        width: 560,
+        minHeight: 790,
+        fontFamily: lang === "ur" ? "'Noto Nastaliq Urdu', serif" : "Cambria, Georgia, serif",
+        fontSize: 12.5,
+      }}
     >
       <div className="p-5">
         <div className="flex items-center justify-between mb-1">
@@ -429,7 +538,7 @@ function TestPaperPreview({ school, meta, parts, lang, t, totalMarks }) {
 
         {meta.testName && <p className="text-center font-bold my-2">{meta.testName}</p>}
 
-        <table className="w-full border-collapse border border-slate-400 text-[11px] mb-3">
+        <table className="w-full table-fixed border-collapse border border-slate-400 text-[11px] mb-3">
           <tbody>
             <PreviewRow lang={lang} pairs={[[HL(lang, "Student Name", "طالب علم کا نام"), ""], [HL(lang, "Father Name", "والد کا نام"), ""]]} />
             <PreviewRow
@@ -471,8 +580,8 @@ function PreviewRow({ pairs, lang }) {
     <tr dir={lang === "ur" ? "rtl" : "ltr"}>
       {pairs.map(([label, val], i) => (
         <React.Fragment key={i}>
-          <td className="border border-slate-300 bg-slate-100 font-semibold px-1.5 py-1 text-center">{label}</td>
-          <td className="border border-slate-300 px-1.5 py-1 text-center">{val || "\u00A0"}</td>
+          <td className="border border-slate-300 bg-slate-100 font-semibold px-1.5 py-1.5 text-center text-[9px]">{label}</td>
+          <td className="border border-slate-300 px-1.5 py-1.5 text-center text-[9px]">{val || "\u00A0"}</td>
         </React.Fragment>
       ))}
     </tr>
@@ -480,12 +589,23 @@ function PreviewRow({ pairs, lang }) {
 }
 
 function PreviewPart({ part, lang }) {
-  const { prefix, verb, marksExpr, total } = partStatement(part, lang);
   const isMcq = part.type === "mcq";
   return (
     <div className="mb-4">
       <p className="text-center font-bold underline mb-1">{part.title}</p>
-      <div className="flex items-baseline justify-between font-semibold mb-1.5">
+      {part.subParts.map((subPart) => (
+        <PreviewSubPart key={subPart.id} subPart={subPart} type={part.type} isMcq={isMcq} lang={lang} />
+      ))}
+    </div>
+  );
+}
+
+function PreviewSubPart({ subPart, type, isMcq, lang }) {
+  const { prefix, verb, marksExpr, total } = partStatement(subPart, type, lang);
+  return (
+    <div className="mb-3">
+      {subPart.title && <p className="font-semibold text-[11px] mb-1">{subPart.title}</p>}
+      <div className="flex items-baseline justify-between font-semibold mb-1.5 text-[11px]">
         <span>
           {prefix} {verb}
         </span>
@@ -495,39 +615,43 @@ function PreviewPart({ part, lang }) {
       </div>
 
       {isMcq ? (
-        <table className="w-full border-collapse border border-slate-400 text-[10.5px]">
-          <thead>
-            <tr className="bg-slate-700 text-white">
-              {(lang === "ur" ? ["د", "ج", "ب", "الف", "سوالات", "نمبر"] : ["No.", "Questions", "A", "B", "C", "D"]).map((h) => (
-                <th key={h} className="border border-slate-500 px-1 py-1 font-semibold">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {part.questions.map((q, idx) => {
-              const opts = [q.options?.a, q.options?.b, q.options?.c, q.options?.d];
-              const cells = lang === "ur" ? [...[...opts].reverse(), q.text, idx + 1] : [idx + 1, q.text, ...opts];
-              return (
-                <tr key={q.id}>
-                  {cells.map((c, i) => (
-                    <td key={i} className="border border-slate-300 px-1 py-2 text-center align-top">
-                      {c || "\u00A0"}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="space-y-2">
+          {subPart.questions.map((q, idx) => (
+            <div key={q.id}>
+              <p className="text-[11px] mb-1">
+                <span className="font-semibold">{idx + 1}. </span>
+                {q.text || "\u00A0"}
+              </p>
+              <div className={`grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] ${lang === "ur" ? "pr-4" : "pl-4"}`}>
+                {(lang === "ur"
+                  ? [["ب", q.options?.b], ["الف", q.options?.a], ["د", q.options?.d], ["ج", q.options?.c]]
+                  : [["A", q.options?.a], ["B", q.options?.b], ["C", q.options?.c], ["D", q.options?.d]]
+                ).map(([label, val], i) => (
+                  <span key={i}>
+                    <span className="font-semibold">{label}) </span>
+                    {val || "\u00A0"}
+                  </span>
+                ))}
+              </div>
+              {q.shape && (
+                <div
+                  className="border border-dashed border-slate-400 rounded mt-1"
+                  style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
+                />
+              )}
+            </div>
+          ))}
+        </div>
       ) : (
-        <ol className={lang === "ur" ? "pr-4" : "pl-4"} style={{ listStyle: "decimal" }}>
-          {part.questions.map((q) => (
+        <ol className={`text-[11px] ${lang === "ur" ? "pr-4" : "pl-4"}`} style={{ listStyle: "decimal" }}>
+          {subPart.questions.map((q) => (
             <li key={q.id} className="mb-1">
               {q.text || "\u00A0"}
               {q.shape && (
-                <div className="border border-dashed border-slate-400 rounded mt-1" style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }} />
+                <div
+                  className="border border-dashed border-slate-400 rounded mt-1"
+                  style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
+                />
               )}
             </li>
           ))}

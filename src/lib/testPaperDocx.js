@@ -18,6 +18,7 @@ import {
   ShadingType,
   VerticalAlign,
   LevelFormat,
+  TableLayoutType,
   convertMillimetersToTwip,
 } from "docx";
 import { attemptCount, partStatement, grandTotalMarks, SHAPE_LINES } from "./testPaperLogic.js";
@@ -37,26 +38,38 @@ const CONTENT_WIDTH = PAGE.size.width - PAGE.margin.left - PAGE.margin.right; //
 const BORDER = { style: BorderStyle.SINGLE, size: 4, color: "555555" };
 const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
 const CELL_BORDERS = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+const NO_BORDERS = { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER };
+// Small internal padding so text never touches a cell's border — part of
+// what makes the header grid read as "complete" rather than cramped.
+const CELL_MARGINS = { top: 60, bottom: 60, left: 90, right: 90 };
 const HEADER_FILL = "2F2F2F";
 const LABEL_FILL = "E7E7E7";
 
 const URDU_FONT = "Jameel Noori Nastaleeq"; // falls back to a system Nastaliq/Arabic font if absent
-const EN_FONT = "Calibri";
+const EN_FONT = "Cambria";
+
+// Two font sizes, used consistently everywhere in the document (docx sizes
+// are in half-points, so 22 = 11pt and 18 = 9pt):
+//   MAIN_SIZE   — question text, instruction lines, option text: 11pt
+//   NORMAL_SIZE — labels/values, table headers, everything secondary: 9pt
+const MAIN_SIZE = 22; // 11pt
+const NORMAL_SIZE = 18; // 9pt
 
 function font(lang) {
   return lang === "ur" ? URDU_FONT : EN_FONT;
 }
 
-function run(text, { bold = false, lang = "en", size = 22, color } = {}) {
+function run(text, { bold = false, lang = "en", size = MAIN_SIZE, color } = {}) {
   return new TextRun({ text: text ?? "", bold, font: font(lang), size, color, rightToLeft: lang === "ur" });
 }
 
-function para(children, { align, lang = "en", spacing } = {}) {
+function para(children, { align, lang = "en", spacing, border } = {}) {
   return new Paragraph({
     children: Array.isArray(children) ? children : [children],
     alignment: align || (lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT),
     bidirectional: lang === "ur",
     spacing,
+    border,
   });
 }
 
@@ -69,9 +82,10 @@ function labelCell(text, lang, opts = {}) {
     width: cellWidth(opts.width),
     shading: { type: ShadingType.CLEAR, fill: LABEL_FILL },
     borders: CELL_BORDERS,
+    margins: CELL_MARGINS,
     verticalAlign: VerticalAlign.CENTER,
     columnSpan: opts.span,
-    children: [para(run(text, { bold: true, lang, size: 18 }), { align: AlignmentType.CENTER, lang })],
+    children: [para(run(text, { bold: true, lang, size: NORMAL_SIZE }), { align: AlignmentType.CENTER, lang })],
   });
 }
 
@@ -79,16 +93,20 @@ function valueCell(text, lang, opts = {}) {
   return new TableCell({
     width: cellWidth(opts.width),
     borders: CELL_BORDERS,
+    margins: CELL_MARGINS,
     verticalAlign: VerticalAlign.CENTER,
     columnSpan: opts.span,
-    children: [para(run(text || " ", { lang, size: 18 }), { align: AlignmentType.CENTER, lang })],
+    children: [para(run(text || " ", { lang, size: NORMAL_SIZE }), { align: AlignmentType.CENTER, lang })],
   });
 }
 
 // ---------------------------------------------------------------------
 // Header: school banner (name/address/phone, mirrors the diary's header)
 // plus the student/roll/class/time/marks details grid from the reference
-// paper format.
+// paper format. `layout: FIXED` (rather than Word's default auto-fit) is
+// what makes every cell actually keep the width it was given, so the grid
+// renders as one complete rectangle — matching the reference image —
+// instead of Word quietly re-shrinking columns to fit their text.
 // ---------------------------------------------------------------------
 function buildHeader({ school, meta, lang, totalMarks }) {
   const w = CONTENT_WIDTH;
@@ -96,11 +114,11 @@ function buildHeader({ school, meta, lang, totalMarks }) {
     align: AlignmentType.CENTER,
     lang,
   });
-  const addrLine = para(run(school?.address || "", { lang, size: 18 }), {
+  const addrLine = para(run(school?.address || "", { lang, size: NORMAL_SIZE }), {
     align: AlignmentType.CENTER,
     lang,
   });
-  const phoneLine = para(run(school?.phone || "", { lang, size: 18 }), {
+  const phoneLine = para(run(school?.phone || "", { lang, size: NORMAL_SIZE }), {
     align: AlignmentType.CENTER,
     lang,
   });
@@ -133,96 +151,115 @@ function buildHeader({ school, meta, lang, totalMarks }) {
         };
 
   const detailsRows = [
-    [labelCell(L.studentName, lang, { width: w * 0.18 }), valueCell("", lang, { width: w * 0.32 }), labelCell(L.fatherName, lang, { width: w * 0.18 }), valueCell("", lang, { width: w * 0.32 })],
-    [labelCell(L.rollNo, lang, { width: w * 0.18 }), valueCell("", lang, { width: w * 0.32 }), labelCell(L.className, lang, { width: w * 0.18 }), valueCell(meta.className, lang, { width: w * 0.16 }), labelCell(L.section, lang, { width: w * 0.08 }), valueCell(meta.section, lang, { width: w * 0.08 })],
-    [labelCell(L.time, lang, { width: w * 0.18 }), valueCell(time, lang, { width: w * 0.16 }), labelCell(L.totalMarks, lang, { width: w * 0.16 }), valueCell(total, lang, { width: w * 0.16 }), labelCell(L.objMarks, lang, { width: w * 0.18 }), valueCell("", lang, { width: w * 0.16 })],
-    [labelCell(L.subject, lang, { width: w * 0.18 }), valueCell(meta.subject, lang, { width: w * 0.32 }), labelCell(L.invigilator, lang, { width: w * 0.18 }), valueCell("", lang, { width: w * 0.32 })],
+    [labelCell(L.studentName, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.33 }), labelCell(L.fatherName, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.33 })],
+    [labelCell(L.rollNo, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.19 }), labelCell(L.className, lang, { width: w * 0.15 }), valueCell(meta.className, lang, { width: w * 0.16 }), labelCell(L.section, lang, { width: w * 0.13 }), valueCell(meta.section, lang, { width: w * 0.20 })],
+    [labelCell(L.time, lang, { width: w * 0.17 }), valueCell(time, lang, { width: w * 0.19 }), labelCell(L.totalMarks, lang, { width: w * 0.15 }), valueCell(total, lang, { width: w * 0.16 }), labelCell(L.objMarks, lang, { width: w * 0.13 }), valueCell("", lang, { width: w * 0.20 })],
+    [labelCell(L.subject, lang, { width: w * 0.17 }), valueCell(meta.subject, lang, { width: w * 0.33 }), labelCell(L.invigilator, lang, { width: w * 0.17 }), valueCell("", lang, { width: w * 0.33 })],
   ];
 
   // Urdu template mirrors the row order right-to-left; simplest faithful
   // approach is to reverse each row's cell order so the labels still read
   // naturally right-to-left in Word.
   const rows = (lang === "ur" ? detailsRows.map((r) => [...r].reverse()) : detailsRows).map(
-    (cells) => new TableRow({ children: cells })
+    (cells) => new TableRow({ children: cells, cantSplit: true })
   );
 
   const detailsTable = new Table({
     width: { size: w, type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
     rows,
   });
 
   const bits = [nameLine];
-  if (addrLine.rootKey) bits.push(addrLine);
-  bits.push(phoneLine);
+  if (school?.address) bits.push(addrLine);
+  if (school?.phone) bits.push(phoneLine);
   if (titleLine) bits.push(titleLine);
   bits.push(detailsTable);
   return bits;
 }
 
 // ---------------------------------------------------------------------
-// MCQ (objective) part — a No./Question/A/B/C/D table, columns mirrored
-// right-to-left for Urdu so "نمبر" reads on the right like the template.
+// MCQ (objective) part — each question sits on its own line, and its four
+// options are laid out in a compact 2x2 grid directly below it (rather
+// than a No./Question/A/B/C/D row-table), matching how MCQs are normally
+// set out on a printed paper.
 // ---------------------------------------------------------------------
-function buildMcqPart(part, lang) {
+function buildMcqQuestions(subPart, lang) {
   const w = CONTENT_WIDTH;
-  const noW = w * 0.07;
-  const qW = w * 0.51;
-  const optW = (w - noW - qW) / 4;
+  const optLabels = lang === "ur" ? ["الف", "ب", "ج", "د"] : ["A", "B", "C", "D"];
+  const indent = 260; // twips — options sit slightly indented under their question
+  const optColWidth = (w - indent) / 2;
 
-  const headersEn = ["No.", "Questions", "A", "B", "C", "D"];
-  const headersUr = ["د", "ج", "ب", "الف", "سوالات", "نمبر"];
-  const widthsEn = [noW, qW, optW, optW, optW, optW];
-  const widthsUr = [optW, optW, optW, optW, qW, noW];
+  const nodes = [];
 
-  const headers = lang === "ur" ? headersUr : headersEn;
-  const widths = lang === "ur" ? widthsUr : widthsEn;
+  subPart.questions.forEach((q, idx) => {
+    nodes.push(
+      new Paragraph({
+        alignment: lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+        bidirectional: lang === "ur",
+        spacing: { before: 160, after: 60 },
+        children: [
+          run(`${idx + 1}. `, { bold: true, lang, size: MAIN_SIZE }),
+          run(q.text, { lang, size: MAIN_SIZE }),
+        ],
+      })
+    );
 
-  const headerRow = new TableRow({
-    tableHeader: true,
-    children: headers.map(
-      (h, i) =>
-        new TableCell({
-          width: cellWidth(widths[i]),
-          shading: { type: ShadingType.CLEAR, fill: HEADER_FILL },
-          borders: CELL_BORDERS,
-          verticalAlign: VerticalAlign.CENTER,
-          children: [para(run(h, { bold: true, lang, size: 18, color: "FFFFFF" }), { align: AlignmentType.CENTER, lang })],
-        })
-    ),
-  });
-
-  const bodyRows = part.questions.map((q, idx) => {
-    const shapeExtra = q.shape
-      ? [para(run("", { lang }), { lang, spacing: { before: 40 } }), ...Array.from({ length: SHAPE_LINES[q.shapeSize] || 3 }).map(() => para(run("", { lang })))]
-      : [];
-    const qCellChildren = [para(run(q.text, { lang, size: 18 }), { lang }), ...shapeExtra];
-    const optCell = (val) =>
+    const optCell = (label, text) =>
       new TableCell({
-        borders: CELL_BORDERS,
+        width: cellWidth(optColWidth),
+        borders: NO_BORDERS,
+        margins: { top: 20, bottom: 20, left: 40, right: 40 },
         verticalAlign: VerticalAlign.CENTER,
-        children: [para(run(val, { lang, size: 18 }), { align: AlignmentType.CENTER, lang })],
+        children: [
+          para(
+            [run(`${label}) `, { bold: true, lang, size: NORMAL_SIZE }), run(text || "", { lang, size: NORMAL_SIZE })],
+            { lang }
+          ),
+        ],
       });
-    const noCell = new TableCell({
-      borders: CELL_BORDERS,
-      verticalAlign: VerticalAlign.CENTER,
-      children: [para(run(String(idx + 1), { bold: true, lang, size: 18 }), { align: AlignmentType.CENTER, lang })],
-    });
-    const qCell = new TableCell({ borders: CELL_BORDERS, verticalAlign: VerticalAlign.CENTER, children: qCellChildren });
 
-    const optsEn = [optCell(q.options?.a), optCell(q.options?.b), optCell(q.options?.c), optCell(q.options?.d)];
-    const cells = lang === "ur" ? [...[...optsEn].reverse(), qCell, noCell] : [noCell, qCell, ...optsEn];
-    return new TableRow({ children: cells });
+    const pairs = [
+      [optLabels[0], q.options?.a],
+      [optLabels[1], q.options?.b],
+      [optLabels[2], q.options?.c],
+      [optLabels[3], q.options?.d],
+    ];
+    const row1 = lang === "ur" ? [pairs[1], pairs[0]] : [pairs[0], pairs[1]];
+    const row2 = lang === "ur" ? [pairs[3], pairs[2]] : [pairs[2], pairs[3]];
+
+    nodes.push(
+      new Table({
+        width: { size: w - indent, type: WidthType.DXA },
+        layout: TableLayoutType.FIXED,
+        indent: { size: indent, type: WidthType.DXA },
+        rows: [
+          new TableRow({ children: row1.map(([l, t]) => optCell(l, t)) }),
+          new TableRow({ children: row2.map(([l, t]) => optCell(l, t)) }),
+        ],
+      })
+    );
+
+    if (q.shape) {
+      nodes.push(
+        new Paragraph({
+          border: { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER },
+          spacing: { before: 80, after: 60 },
+          children: [new TextRun({ text: "", break: SHAPE_LINES[q.shapeSize] || 3 })],
+        })
+      );
+    }
   });
 
-  return new Table({ width: { size: w, type: WidthType.DXA }, rows: [headerRow, ...bodyRows] });
+  return nodes;
 }
 
 // ---------------------------------------------------------------------
 // Written (subjective) part — a numbered list, restarting at 1 for every
-// part via its own numbering reference.
+// sub-part via its own numbering reference.
 // ---------------------------------------------------------------------
-function buildWrittenPart(part, lang, numberingRef) {
-  return part.questions.map((q) => {
+function buildWrittenQuestions(subPart, lang, numberingRef) {
+  return subPart.questions.map((q) => {
     const shapeBox = q.shape
       ? new Paragraph({
           border: { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER },
@@ -235,7 +272,7 @@ function buildWrittenPart(part, lang, numberingRef) {
       alignment: lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
       bidirectional: lang === "ur",
       spacing: { after: 100 },
-      children: [run(q.text, { lang, size: 20 })],
+      children: [run(q.text, { lang, size: MAIN_SIZE })],
     });
     return shapeBox ? [qPara, shapeBox] : [qPara];
   }).flat();
@@ -249,23 +286,31 @@ function buildPartHeading(part, lang) {
   });
 }
 
+function buildSubPartHeading(subPart, lang) {
+  return para(run(subPart.title, { bold: true, lang, size: NORMAL_SIZE }), {
+    align: lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT,
+    lang,
+    spacing: { before: 160, after: 40 },
+  });
+}
+
 // Instruction line: "Q. <verb> (Any N):"   (marks x count)   /total
 // laid out as a 3-cell borderless table so the marks/total sit flush right
 // no matter how long the instruction text is, same as the printed original.
-function buildInstructionLine(part, lang) {
-  const { prefix, verb, marksExpr, total } = partStatement(part, lang);
+function buildInstructionLine(subPart, type, lang) {
+  const { prefix, verb, marksExpr, total } = partStatement(subPart, type, lang);
   const w = CONTENT_WIDTH;
   const cell = (children, width, align) =>
     new TableCell({
       width: cellWidth(width),
-      borders: { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER },
+      borders: NO_BORDERS,
       verticalAlign: VerticalAlign.CENTER,
       children: [para(children, { align, lang })],
     });
 
-  const textChildren = [run(`${prefix} `, { bold: true, lang, size: 20 }), run(verb, { bold: true, lang, size: 20 })];
-  const marksChildren = [run(marksExpr, { bold: true, lang, size: 20 })];
-  const totalChildren = [run(`/${total}`, { bold: true, lang, size: 20 })];
+  const textChildren = [run(`${prefix} `, { bold: true, lang, size: MAIN_SIZE }), run(verb, { bold: true, lang, size: MAIN_SIZE })];
+  const marksChildren = [run(marksExpr, { bold: true, lang, size: MAIN_SIZE })];
+  const totalChildren = [run(`/${total}`, { bold: true, lang, size: MAIN_SIZE })];
 
   const cells = [
     cell(textChildren, w * 0.68, lang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT),
@@ -274,6 +319,7 @@ function buildInstructionLine(part, lang) {
   ];
   return new Table({
     width: { size: w, type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
     rows: [new TableRow({ children: lang === "ur" ? [...cells].reverse() : cells })],
   });
 }
@@ -284,18 +330,20 @@ export async function buildTestPaperDocx({ school, lang, meta, parts }) {
   const numbering = {
     config: parts
       .filter((p) => p.type === "written")
-      .map((p) => ({
-        reference: `part-${p.id}`,
-        levels: [
-          {
-            level: 0,
-            format: LevelFormat.DECIMAL,
-            text: "%1.",
-            alignment: AlignmentType.START,
-            style: { paragraph: { indent: { left: 460, hanging: 260 } } },
-          },
-        ],
-      })),
+      .flatMap((p) =>
+        p.subParts.map((sp) => ({
+          reference: `sub-${sp.id}`,
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.DECIMAL,
+              text: "%1.",
+              alignment: AlignmentType.START,
+              style: { paragraph: { indent: { left: 460, hanging: 260 } } },
+            },
+          ],
+        }))
+      ),
   };
 
   const body = [];
@@ -303,12 +351,16 @@ export async function buildTestPaperDocx({ school, lang, meta, parts }) {
 
   for (const part of parts) {
     body.push(buildPartHeading(part, lang));
-    body.push(buildInstructionLine(part, lang));
-    body.push(para(run("", { lang }), { lang, spacing: { after: 60 } }));
-    if (part.type === "mcq") {
-      body.push(buildMcqPart(part, lang));
-    } else {
-      body.push(...buildWrittenPart(part, lang, `part-${part.id}`));
+
+    for (const subPart of part.subParts) {
+      if (subPart.title) body.push(buildSubPartHeading(subPart, lang));
+      body.push(buildInstructionLine(subPart, part.type, lang));
+      body.push(para(run("", { lang }), { lang, spacing: { after: 60 } }));
+      if (part.type === "mcq") {
+        body.push(...buildMcqQuestions(subPart, lang));
+      } else {
+        body.push(...buildWrittenQuestions(subPart, lang, `sub-${subPart.id}`));
+      }
     }
   }
 

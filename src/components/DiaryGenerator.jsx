@@ -307,8 +307,12 @@ const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subj
         </div>
         <div className="text-center flex-1">
           <h1 className="font-bold text-2xl leading-tight" style={{ color: c.text }}>{school?.name}</h1>
-          <p className="text-xs" style={{ color: c.text }}>{school?.address}</p>
-          <p className="text-xs" style={{ color: c.text }}>{school?.phone}</p>
+          {school?.address && (
+            <p className="text-xs font-semibold underline" style={{ color: c.text }}>{school.address}</p>
+          )}
+          {school?.phone && (
+            <p className="text-xs font-semibold underline" style={{ color: c.text }}>{school.phone}</p>
+          )}
         </div>
         <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
           <img
