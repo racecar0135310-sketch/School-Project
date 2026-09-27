@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { toPng } from "html-to-image";
 import { loadTeachers, findTeacherByName, getSchool, verifyDiaryCode } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
-import { DEFAULT_COLORS } from "/lib/colors.js";
+import { DEFAULT_COLORS } from "../lib/colors.js";
 
 // Logos live in /public/logos so they load with a plain, absolute path —
 // this works the same in dev, build, and preview, with no bundler import needed.
