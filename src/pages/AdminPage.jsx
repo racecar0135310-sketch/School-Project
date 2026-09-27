@@ -7,8 +7,11 @@ import {
   deleteTeacher,
   getSchool,
   verifyAdminPassword,
+  updateSchoolColors,
 } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
+import ColorField from "../components/ColorField.jsx";
+import { DEFAULT_COLORS } from "../lib/colors.js";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
 
@@ -27,12 +30,17 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [colors, setColors] = useState(DEFAULT_COLORS);
+  const [savingColors, setSavingColors] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     getSchool(schoolId)
       .then((s) => {
-        if (!cancelled) setSchool(s);
+        if (!cancelled) {
+          setSchool(s);
+          setColors(s.colors || DEFAULT_COLORS);
+        }
       })
       .catch(() => {
         if (!cancelled) setSchoolError(true);
@@ -41,6 +49,21 @@ export default function AdminPage() {
       cancelled = true;
     };
   }, [schoolId]);
+
+  const persistColors = async (next) => {
+    setColors(next);
+    setSavingColors(true);
+    try {
+      await updateSchoolColors(schoolId, next);
+    } catch (err) {
+      setError("Couldn't save the color change — please try again.");
+    } finally {
+      setSavingColors(false);
+    }
+  };
+
+  const updateColor = (key, value) => persistColors({ ...colors, [key]: value });
+  const resetColors = () => persistColors(DEFAULT_COLORS);
 
   const refresh = async () => {
     try {
@@ -174,6 +197,38 @@ export default function AdminPage() {
             {error}
           </div>
         )}
+
+        <div className="bg-white rounded-lg shadow p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="font-semibold text-slate-800">Diary colors</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Changes here apply to the diary for everyone at this school, on every device.
+                {savingColors && " Saving…"}
+              </p>
+            </div>
+            <button
+              onClick={resetColors}
+              className="text-xs font-medium text-slate-400 hover:text-slate-600"
+            >
+              Reset to default
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <ColorField
+              label="Background"
+              value={colors.background}
+              onChange={(v) => updateColor("background", v)}
+            />
+            <ColorField
+              label="Border"
+              value={colors.border}
+              onChange={(v) => updateColor("border", v)}
+            />
+            <ColorField label="Boxes" value={colors.box} onChange={(v) => updateColor("box", v)} />
+            <ColorField label="Text" value={colors.text} onChange={(v) => updateColor("text", v)} />
+          </div>
+        </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-5 space-y-3">
           <h2 className="font-semibold text-slate-800">

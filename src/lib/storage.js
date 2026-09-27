@@ -42,6 +42,13 @@ export async function verifyAdminPassword(schoolId, password) {
   return ok;
 }
 
+export async function updateSchoolColors(schoolId, colors) {
+  return request(`/api/schools/${schoolId}/colors`, {
+    method: "PUT",
+    body: JSON.stringify({ colors }),
+  });
+}
+
 // ---------------------------------------------------------------------
 // Teachers (public, but always scoped to one school)
 // ---------------------------------------------------------------------

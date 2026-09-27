@@ -61,7 +61,7 @@ app.post("/api/dev/verify", (req, res) => {
 // These deliberately never return diaryCode or adminPassword.
 // ---------------------------------------------------------------------
 function publicSchool(s) {
-  return { id: s._id, name: s.name, address: s.address, phone: s.phone };
+  return { id: s._id, name: s.name, address: s.address, phone: s.phone, colors: s.colors };
 }
 
 app.get("/api/schools", async (req, res) => {
@@ -100,6 +100,28 @@ app.post("/api/schools/:id/verify-admin", async (req, res) => {
     res.json({ ok: req.body.password === school.adminPassword });
   } catch (err) {
     res.status(500).json({ error: "Failed to verify password." });
+  }
+});
+
+// Lets a school's own Admin Portal change its diary's theme colors. This is
+// intentionally separate from the /api/dev/schools routes (which manage
+// codes/passwords and need the DEV_PASSWORD) — colors are a per-school admin
+// concern, not a super-admin one.
+app.put("/api/schools/:id/colors", async (req, res) => {
+  try {
+    const { colors } = req.body;
+    if (!colors || typeof colors !== "object") {
+      return res.status(400).json({ error: "colors is required." });
+    }
+    const school = await School.findByIdAndUpdate(
+      req.params.id,
+      { colors },
+      { new: true, runValidators: true }
+    );
+    if (!school) return res.status(404).json({ error: "School not found." });
+    res.json(publicSchool(school));
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update colors." });
   }
 });
 

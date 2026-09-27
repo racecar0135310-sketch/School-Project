@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { toPng } from "html-to-image";
 import { loadTeachers, findTeacherByName, getSchool, verifyDiaryCode } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
+import { DEFAULT_COLORS } from "../lib/colors.js";
 
 // Logos live in /public/logos so they load with a plain, absolute path —
 // this works the same in dev, build, and preview, with no bundler import needed.
@@ -31,27 +32,6 @@ function todayDay() {
 let idCounter = 1;
 const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
 
-// The diary's four customizable colors, matching the four areas visible on
-// the template: the overall background, every border/grid line, the shaded
-// "boxes" (header banner, CLASS/SECTION/etc. labels, SUBJECT/DESCRIPTION
-// header row), and all of the text.
-const DEFAULT_COLORS = {
-  background: "#0b2545",
-  border: "#38bdf8",
-  box: "#123a67",
-  text: "#f1f5f9",
-};
-
-function loadStoredColors(schoolId) {
-  try {
-    const raw = localStorage.getItem(`diary-colors-${schoolId}`);
-    if (!raw) return DEFAULT_COLORS;
-    return { ...DEFAULT_COLORS, ...JSON.parse(raw) };
-  } catch {
-    return DEFAULT_COLORS;
-  }
-}
-
 export default function DiaryPage() {
   const { schoolId } = useParams();
   const sessionKey = `diary-access-granted-${schoolId}`;
@@ -73,29 +53,9 @@ export default function DiaryPage() {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [matched, setMatched] = useState(false);
-  // Remembered per school, so a teacher's chosen look stays put next visit.
-  const [colors, setColors] = useState(() => loadStoredColors(schoolId));
-
-  const updateColor = (key, value) => {
-    setColors((prev) => {
-      const next = { ...prev, [key]: value };
-      try {
-        localStorage.setItem(`diary-colors-${schoolId}`, JSON.stringify(next));
-      } catch {
-        // Storage full/unavailable — the picker still works for this visit.
-      }
-      return next;
-    });
-  };
-
-  const resetColors = () => {
-    setColors(DEFAULT_COLORS);
-    try {
-      localStorage.removeItem(`diary-colors-${schoolId}`);
-    } catch {
-      // ignore
-    }
-  };
+  // Set entirely from this school's Admin Portal — the diary itself only
+  // ever reads this, it never changes it.
+  const colors = school?.colors || DEFAULT_COLORS;
 
   // previewRef points at a full-size (560px), off-screen copy of the diary —
   // this is what actually gets captured for the download, always at full
@@ -276,40 +236,6 @@ export default function DiaryPage() {
 
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold text-slate-800">Colors</h2>
-              <button
-                onClick={resetColors}
-                className="text-xs font-medium text-slate-400 hover:text-slate-600"
-              >
-                Reset to default
-              </button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <ColorField
-                label="Background"
-                value={colors.background}
-                onChange={(v) => updateColor("background", v)}
-              />
-              <ColorField
-                label="Border"
-                value={colors.border}
-                onChange={(v) => updateColor("border", v)}
-              />
-              <ColorField
-                label="Boxes"
-                value={colors.box}
-                onChange={(v) => updateColor("box", v)}
-              />
-              <ColorField
-                label="Text"
-                value={colors.text}
-                onChange={(v) => updateColor("text", v)}
-              />
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold text-slate-800">Subjects &amp; homework</h2>
               <button
                 onClick={addSubject}
@@ -449,33 +375,6 @@ function Field({ label, value, onChange, placeholder }) {
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
-    </label>
-  );
-}
-
-// A native <input type="color"> already gives a full RGB/HSV picker (with a
-// hex field) in every modern browser, so that's all this needs — plus the
-// hex value shown alongside it for anyone who wants to type an exact code.
-function ColorField({ label, value, onChange }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-slate-500">{label}</span>
-      <div className="mt-1 flex items-center gap-2 border border-slate-300 rounded px-1.5 py-1">
-        <input
-          type="color"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-7 h-7 shrink-0 border-0 bg-transparent p-0 cursor-pointer"
-          title={`Pick a ${label.toLowerCase()} color`}
-        />
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full min-w-0 text-xs font-mono text-slate-600 focus:outline-none"
-          spellCheck={false}
-        />
-      </div>
     </label>
   );
 }
