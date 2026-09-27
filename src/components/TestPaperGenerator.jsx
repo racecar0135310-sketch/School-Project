@@ -624,40 +624,49 @@ function TestPaperPreview({ school, meta, parts, lang, t, totalMarks, style }) {
 
         {meta.testName && <p className="text-center font-bold my-2">{meta.testName}</p>}
 
-        <table className="w-full table-fixed border-collapse border border-slate-400 text-[11px] mb-3">
-          <tbody>
-            <PreviewRow
-              lang={lang}
-              pairs={[
-                [HL(lang, "Student Name", "طالب علم کا نام"), "", "15%", "28%"],
-                [HL(lang, "Father Name", "والد کا نام"), "", "12%", "45%"],
-              ]}
-            />
-            <PreviewRow
-              lang={lang}
-              pairs={[
-                [HL(lang, "Roll No.", "رول نمبر"), "", "17%", "19%"],
-                [HL(lang, "Class", "کلاس"), meta.className, "15%", "16%"],
-                [HL(lang, "Section", "سیکشن"), meta.section, "13%", "20%"],
-              ]}
-            />
-            <PreviewRow
-              lang={lang}
-              pairs={[
-                [HL(lang, "Time", "وقت"), meta.totalTime, "17%", "19%"],
-                [HL(lang, "Total Marks", "کل نمبر"), String(totalMarks), "15%", "16%"],
-                [HL(lang, "Obt. Marks", "حاصل کردہ نمبر"), "", "13%", "20%"],
-              ]}
-            />
-            <PreviewRow
-              lang={lang}
-              pairs={[
-                [HL(lang, "Subject", "مضمون"), meta.subject, "15%", "28%"],
-                [HL(lang, "Invigilator", "نگران"), "", "12%", "45%"],
-              ]}
-            />
-          </tbody>
-        </table>
+        {/*
+          Built as flex rows (not an HTML <table>) on purpose: a real
+          <table> with table-layout:fixed locks every row's column
+          boundaries to whatever the FIRST row declares, so a 6-cell row
+          under a 4-cell row either overflows or gets silently clipped —
+          which is exactly why "Section" and "Obt. Marks" used to render
+          outside the box instead of as a proper cell. Each flex row below
+          is independent and always fills the full 100% width, so every
+          row's last box (Father Name, Section, Obt. Marks, Invigilator)
+          ends flush with the same right edge — their border lines meet.
+        */}
+        <div className="border-t border-l border-slate-400 text-[9px] mb-3">
+          <HeaderGridRow
+            lang={lang}
+            cells={[
+              [HL(lang, "Student Name", "طالب علم کا نام"), "", "15%", "28%"],
+              [HL(lang, "Father Name", "والد کا نام"), "", "12%", "45%"],
+            ]}
+          />
+          <HeaderGridRow
+            lang={lang}
+            cells={[
+              [HL(lang, "Roll No.", "رول نمبر"), "", "17%", "19%"],
+              [HL(lang, "Class", "کلاس"), meta.className, "15%", "16%"],
+              [HL(lang, "Section", "سیکشن"), meta.section, "13%", "20%"],
+            ]}
+          />
+          <HeaderGridRow
+            lang={lang}
+            cells={[
+              [HL(lang, "Time", "وقت"), meta.totalTime, "17%", "19%"],
+              [HL(lang, "Total Marks", "کل نمبر"), String(totalMarks), "15%", "16%"],
+              [HL(lang, "Obt. Marks", "حاصل کردہ نمبر"), "", "13%", "20%"],
+            ]}
+          />
+          <HeaderGridRow
+            lang={lang}
+            cells={[
+              [HL(lang, "Subject", "مضمون"), meta.subject, "15%", "28%"],
+              [HL(lang, "Invigilator", "نگران"), "", "12%", "45%"],
+            ]}
+          />
+        </div>
 
         {parts.map((part) => (
           <PreviewPart key={part.id} part={part} lang={lang} />
@@ -673,23 +682,28 @@ function HL(lang, en, ur) {
   return lang === "ur" ? ur : en;
 }
 
-function PreviewRow({ pairs, lang }) {
+// One row of the header grid. Every cell only draws its right + bottom
+// border; the outer wrapper (see above) supplies the top + left border
+// once for the whole grid — the same "collapsed border" trick the diary's
+// own GridCell uses — so each box still reads as one complete rectangle
+// with no doubled-up lines between rows.
+function HeaderGridRow({ cells, lang }) {
   return (
-    <tr dir={lang === "ur" ? "rtl" : "ltr"}>
-      {pairs.map(([label, val, labelW, valW], i) => (
+    <div dir={lang === "ur" ? "rtl" : "ltr"} className="flex">
+      {cells.map(([label, val, labelW, valW], i) => (
         <React.Fragment key={i}>
-          <td
-            style={{ width: labelW }}
-            className="border border-slate-300 bg-slate-100 font-semibold px-1.5 py-1.5 text-center text-[9px]"
+          <div
+            style={{ flex: `0 0 ${labelW}` }}
+            className="border-r border-b border-slate-400 bg-slate-100 font-semibold px-1.5 py-1.5 text-center"
           >
             {label}
-          </td>
-          <td style={{ width: valW }} className="border border-slate-300 px-1.5 py-1.5 text-center text-[9px]">
+          </div>
+          <div style={{ flex: `0 0 ${valW}` }} className="border-r border-b border-slate-400 px-1.5 py-1.5 text-center">
             {val || "\u00A0"}
-          </td>
+          </div>
         </React.Fragment>
       ))}
-    </tr>
+    </div>
   );
 }
 
@@ -721,29 +735,43 @@ function PreviewSubPart({ subPart, type, isMcq, lang }) {
       </div>
 
       {isMcq ? (
-        <div className="space-y-2">
+        <div className="border-t border-l border-slate-300 flex flex-wrap">
           {subPart.questions.map((q, idx) => {
             const qLang = detectLang(q.text, lang);
+            const optPairs =
+              qLang === "ur"
+                ? [["ب", q.options?.b], ["الف", q.options?.a], ["د", q.options?.d], ["ج", q.options?.c]]
+                : [["A", q.options?.a], ["B", q.options?.b], ["C", q.options?.c], ["D", q.options?.d]];
             return (
-              <div key={q.id} dir={qLang === "ur" ? "rtl" : "ltr"}>
-                <p className="text-[11px] mb-1">
+              <div
+                key={q.id}
+                dir={qLang === "ur" ? "rtl" : "ltr"}
+                className="w-full border-r border-b border-slate-300 px-2 py-1.5"
+              >
+                <p className="text-[11px] mb-1 font-medium">
                   <span className="font-semibold">{idx + 1}. </span>
                   {q.text || "\u00A0"}
                 </p>
-                <div className={`grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] ${qLang === "ur" ? "pr-4" : "pl-4"}`}>
-                  {(qLang === "ur"
-                    ? [["ب", q.options?.b], ["الف", q.options?.a], ["د", q.options?.d], ["ج", q.options?.c]]
-                    : [["A", q.options?.a], ["B", q.options?.b], ["C", q.options?.c], ["D", q.options?.d]]
-                  ).map(([label, val], i) => (
-                    <span key={i}>
+                <div
+                  className={`grid grid-cols-2 border border-slate-200 rounded overflow-hidden text-[9px] ${
+                    qLang === "ur" ? "mr-4" : "ml-4"
+                  }`}
+                >
+                  {optPairs.map(([label, val], i) => (
+                    <div
+                      key={i}
+                      className={`px-2 py-1 ${i % 2 === 0 ? "border-r" : ""} ${
+                        i < 2 ? "border-b" : ""
+                      } border-slate-200`}
+                    >
                       <span className="font-semibold">{label}) </span>
                       {val || "\u00A0"}
-                    </span>
+                    </div>
                   ))}
                 </div>
                 {q.shape && (
                   <div
-                    className="border border-dashed border-slate-400 rounded mt-1"
+                    className={`border border-dashed border-slate-400 rounded mt-1.5 ${qLang === "ur" ? "mr-4" : "ml-4"}`}
                     style={{ height: q.shapeSize === "large" ? 70 : q.shapeSize === "small" ? 24 : 44 }}
                   />
                 )}
