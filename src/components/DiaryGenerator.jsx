@@ -1,0 +1,404 @@
+import React, { useEffect, useRef, useState } from "react";
+import { toPng } from "html-to-image";
+import { loadTeachers, findTeacherByName } from "../lib/storage.js";
+import { DEFAULT_COLORS } from "../lib/colors.js";
+
+// Logos live in /public/logos so they load with a plain, absolute path —
+// this works the same in dev, build, and preview, with no bundler import needed.
+const minhajUlQuranLogo = "/logos/minhaj-ul-quran-logo.png";
+const mesLogo = "/logos/minhaj-education-society-logo.png";
+
+const BISMILLAH = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
+const DUROOD_1 =
+  "اَللّٰهُمَّ صَلِّ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا صَلَّیْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
+const DUROOD_2 =
+  "اَللّٰهُمَّ بَارِکْ عَلٰی مُحَمَّدٍ وَّعَلٰی آلِ مُحَمَّدٍ کَمَا بَارَکْتَ عَلٰی اِبْرَاہِیْمَ وَعَلٰی آلِ اِبْرَاہِیْمَ اِنَّکَ حَمِیْدٌ مَّجِیْدٌ";
+
+// The diary is always laid out at this pixel width internally, so the
+// downloaded image is identical quality no matter what device generated it.
+// On screen it's scaled down to fit — see ResponsiveDiaryFrame below.
+const DIARY_WIDTH = 560;
+
+function todayFormatted() {
+  const d = new Date();
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
+function todayDay() {
+  return new Date().toLocaleDateString("en-US", { weekday: "long" });
+}
+
+let idCounter = 1;
+const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
+
+// `school` is the already-loaded School record; `schoolId` is passed
+// separately since the public School object doesn't necessarily echo its
+// own id back under a stable key in every caller.
+export default function DiaryGenerator({ school, schoolId }) {
+  const [teachers, setTeachers] = useState([]);
+  const [meta, setMeta] = useState({
+    className: "",
+    section: "",
+    date: todayFormatted(),
+    day: todayDay(),
+    incharge: "",
+  });
+  const [subjects, setSubjects] = useState([newSubjectRow()]);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [matched, setMatched] = useState(false);
+  const colors = school?.colors || DEFAULT_COLORS;
+
+  const previewRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadTeachers(schoolId)
+      .then((list) => {
+        if (!cancelled) setTeachers(list);
+      })
+      .catch(() => {
+        // If the API is briefly unreachable, the incharge dropdown just
+        // won't auto-fill — the rest of the diary still works manually.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schoolId]);
+
+  const updateMeta = (key, value) => setMeta((m) => ({ ...m, [key]: value }));
+
+  const handleInchargeChange = (value) => {
+    updateMeta("incharge", value);
+    const teacher = findTeacherByName(teachers, value);
+    if (teacher) {
+      setMeta((m) => ({ ...m, className: teacher.className, section: teacher.section }));
+      setSubjects(
+        teacher.subjects.length ? teacher.subjects.map((s) => newSubjectRow(s)) : [newSubjectRow()]
+      );
+      setMatched(true);
+    } else {
+      setMatched(false);
+    }
+  };
+
+  const updateSubject = (id, key, value) =>
+    setSubjects((rows) => rows.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
+
+  const addSubject = () => setSubjects((rows) => [...rows, newSubjectRow()]);
+
+  const removeSubject = (id) =>
+    setSubjects((rows) => (rows.length > 1 ? rows.filter((r) => r.id !== id) : rows));
+
+  const handleDone = async () => {
+    if (!previewRef.current) return;
+    setSaving(true);
+    try {
+      const dataUrl = await toPng(previewRef.current, {
+        pixelRatio: 3,
+        backgroundColor: colors.background,
+        cacheBust: true,
+      });
+      const link = document.createElement("a");
+      const fileDate = meta.date.replace(/\//g, "-") || "diary";
+      link.download = `homework-diary-${meta.className || "class"}-${fileDate}.png`;
+      link.href = dataUrl;
+      link.click();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <main className="max-w-6xl mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+      {/* ---------------- FORM ---------------- */}
+      <section className="bg-white rounded-lg shadow p-4 sm:p-5 space-y-5">
+        <div>
+          <h2 className="font-semibold text-slate-800 mb-3">Diary details</h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-500">Incharge</span>
+                <input
+                  list="incharge-names"
+                  className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  value={meta.incharge}
+                  placeholder="Start typing your name…"
+                  onChange={(e) => handleInchargeChange(e.target.value)}
+                />
+                <datalist id="incharge-names">
+                  {teachers.map((t) => (
+                    <option key={t.id} value={t.inchargeName} />
+                  ))}
+                </datalist>
+              </label>
+              {matched ? (
+                <p className="text-[11px] text-emerald-600 mt-1">
+                  Class, section and subjects loaded automatically.
+                </p>
+              ) : (
+                teachers.length > 0 && (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Not registered yet? Ask admin to add you, or fill the fields manually.
+                  </p>
+                )
+              )}
+            </div>
+            <Field label="Class" value={meta.className} onChange={(v) => updateMeta("className", v)} />
+            <Field label="Section" value={meta.section} onChange={(v) => updateMeta("section", v)} />
+            <Field label="Date" value={meta.date} onChange={(v) => updateMeta("date", v)} />
+            <Field label="Day" value={meta.day} onChange={(v) => updateMeta("day", v)} />
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-slate-800">Subjects &amp; homework</h2>
+            <button onClick={addSubject} className="text-sm font-medium text-emerald-700 hover:text-emerald-900">
+              + Add subject
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {subjects.map((row) => (
+              <div key={row.id} className="border border-slate-200 rounded-md p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    className="flex-1 border border-slate-300 rounded px-2 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    placeholder="Subject name (e.g. Math)"
+                    value={row.subject}
+                    onChange={(e) => updateSubject(row.id, "subject", e.target.value)}
+                  />
+                  <button
+                    onClick={() => removeSubject(row.id)}
+                    className="text-slate-400 hover:text-red-600 text-sm px-2"
+                    title="Remove subject"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <textarea
+                  className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  rows={2}
+                  placeholder="Homework / diary text for this subject"
+                  value={row.description}
+                  onChange={(e) => updateSubject(row.id, "description", e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h2 className="font-semibold text-slate-800 mb-2">Note (optional)</h2>
+          <textarea
+            className="w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            rows={2}
+            placeholder="Any note for parents / students"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </div>
+
+        <button
+          onClick={handleDone}
+          disabled={saving}
+          className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-medium rounded-md py-2.5"
+        >
+          {saving ? "Saving…" : "Done — Save as Image"}
+        </button>
+      </section>
+
+      {/* ---------------- LIVE PREVIEW ---------------- */}
+      <section className="lg:sticky lg:top-4 self-start">
+        <p className="text-xs text-slate-500 mb-2">Live preview (this is exactly what gets saved)</p>
+        <ResponsiveDiaryFrame>
+          <DiaryPreview school={school} meta={meta} subjects={subjects} note={note} colors={colors} />
+        </ResponsiveDiaryFrame>
+      </section>
+
+      <div aria-hidden="true" style={{ position: "absolute", top: 0, left: -99999, pointerEvents: "none" }}>
+        <DiaryPreview ref={previewRef} school={school} meta={meta} subjects={subjects} note={note} colors={colors} />
+      </div>
+    </main>
+  );
+}
+
+function ResponsiveDiaryFrame({ children }) {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [height, setHeight] = useState(null);
+
+  useEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+
+    const update = () => {
+      const containerWidth = outer.offsetWidth;
+      const naturalHeight = inner.offsetHeight;
+      if (!containerWidth || !naturalHeight) return;
+      const nextScale = Math.min(containerWidth / DIARY_WIDTH, 1);
+      setScale(nextScale);
+      setHeight(naturalHeight * nextScale);
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(outer);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  });
+
+  return (
+    <div
+      ref={outerRef}
+      className="w-full overflow-hidden rounded shadow border border-slate-300"
+      style={{ height: height ?? undefined }}
+    >
+      <div ref={innerRef} style={{ width: DIARY_WIDTH, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <input
+        className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+const DiaryPreview = React.forwardRef(function DiaryPreview({ school, meta, subjects, note, colors }, ref) {
+  const c = colors || DEFAULT_COLORS;
+  return (
+    <div
+      ref={ref}
+      style={{
+        background: c.background,
+        width: DIARY_WIDTH,
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        color: c.text,
+        borderWidth: 4,
+        borderStyle: "solid",
+        borderColor: c.border,
+        borderRadius: 6,
+      }}
+      className="p-5"
+    >
+      <div
+        style={{ borderWidth: 2, borderStyle: "solid", borderColor: c.border, background: c.box }}
+        className="rounded-2xl px-3 py-2 mb-3 flex items-center justify-between"
+      >
+        <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
+          <img
+            src={school?.leftLogo || minhajUlQuranLogo}
+            alt={school?.name ? `${school.name} logo` : "School logo"}
+            className="w-full h-full object-contain"
+          />
+        </div>
+        <div className="text-center flex-1">
+          <h1 className="font-bold text-2xl leading-tight" style={{ color: c.text }}>{school?.name}</h1>
+          <p className="text-xs" style={{ color: c.text }}>{school?.address}</p>
+          <p className="text-xs" style={{ color: c.text }}>{school?.phone}</p>
+        </div>
+        <div className="w-14 h-14 shrink-0 bg-white rounded-md p-1 flex items-center justify-center">
+          <img
+            src={school?.rightLogo || mesLogo}
+            alt={school?.name ? `${school.name} secondary logo` : "Secondary logo"}
+            className="w-full h-full object-contain"
+          />
+        </div>
+      </div>
+
+      <p dir="rtl" className="text-center mb-5 font-semibold" style={{ fontSize: 28, lineHeight: 1.4, color: c.text }}>
+        {BISMILLAH}
+      </p>
+
+      <div
+        className="text-sm mb-3"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: c.border,
+        }}
+      >
+        <GridCell bold shaded borderR borderB colors={c}>CLASS</GridCell>
+        <GridCell borderR borderB colors={c}>{meta.className}</GridCell>
+        <GridCell bold shaded borderR borderB colors={c}>SECTION</GridCell>
+        <GridCell borderB colors={c}>{meta.section}</GridCell>
+
+        <GridCell bold shaded borderR borderB colors={c}>DATE</GridCell>
+        <GridCell borderR borderB colors={c}>{meta.date}</GridCell>
+        <GridCell bold shaded borderR borderB colors={c}>DAY</GridCell>
+        <GridCell borderB colors={c}>{meta.day}</GridCell>
+
+        <GridCell bold shaded borderR colors={c}>INCHARGE</GridCell>
+        <GridCell colors={c}>{meta.incharge}</GridCell>
+        <div />
+        <div />
+      </div>
+
+      <h2 className="text-center font-bold mb-2" style={{ color: c.text }}>DAILY HOME WORK DIARY</h2>
+
+      <div
+        className="text-sm mb-2"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: c.border,
+        }}
+      >
+        <GridCell bold borderR borderB shaded colors={c}>SUBJECT</GridCell>
+        <GridCell bold borderB span={3} shaded colors={c}>DESCRIPTION</GridCell>
+
+        {subjects.map((row) => (
+          <React.Fragment key={row.id}>
+            <GridCell bold borderR borderB tall colors={c}>{row.subject || "\u00A0"}</GridCell>
+            <GridCell borderB span={3} tall wrap colors={c}>{row.description}</GridCell>
+          </React.Fragment>
+        ))}
+
+        <GridCell bold borderR tall colors={c}>NOTE</GridCell>
+        <GridCell span={3} tall wrap colors={c}>{note}</GridCell>
+      </div>
+
+      <div dir="rtl" className="text-center text-[13px] leading-7 mt-3" style={{ color: c.text }}>
+        <p>{DUROOD_1}</p>
+        <p>{DUROOD_2}</p>
+      </div>
+    </div>
+  );
+});
+
+function GridCell({ bold, shaded, wrap, tall, borderR, borderB, span = 1, className = "", colors, children }) {
+  const c = colors || DEFAULT_COLORS;
+  return (
+    <div
+      style={{
+        gridColumn: `span ${span}`,
+        borderRight: borderR ? `1px solid ${c.border}` : undefined,
+        borderBottom: borderB ? `1px solid ${c.border}` : undefined,
+        background: shaded ? c.box : undefined,
+        color: c.text,
+      }}
+      className={`flex items-center justify-center text-center px-2 ${
+        tall ? "min-h-[46px] py-2" : "min-h-[34px] py-1.5"
+      } ${bold ? "font-semibold" : ""} ${wrap ? "whitespace-pre-wrap" : ""} ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
