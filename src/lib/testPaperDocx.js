@@ -127,6 +127,72 @@ function cellWidth(w) {
   return w !== undefined ? { size: Math.round(w), type: WidthType.DXA } : undefined;
 }
 
+// ---------------------------------------------------------------------
+// Column-width bookkeeping.
+//
+// The `docx` library needs a Table's `columnWidths` set explicitly — if
+// it's left out, the library writes a generic placeholder <w:tblGrid>
+// that doesn't match the real per-cell widths. Word treats that grid (not
+// the individual cells) as authoritative for a fixed-layout table, so
+// whatever the grid says, wins — producing exactly the "cells outside the
+// box" misalignment the live preview never shows (the preview is plain
+// HTML/CSS, which has no such grid to disagree with).
+//
+// roundedWidths() turns fractions-of-a-total into twip integers whose sum
+// is *exactly* the total (absorbing twip-rounding drift into the last
+// column) — a 1-2 twip mismatch between the grid's sum and the table's
+// declared width is the same class of bug, just smaller.
+// ---------------------------------------------------------------------
+function roundedWidths(fractions, total) {
+  const raw = fractions.map((f) => Math.round(f * total));
+  const drift = Math.round(total) - raw.reduce((a, b) => a + b, 0);
+  raw[raw.length - 1] += drift;
+  return raw;
+}
+
+// For a table where different rows split the same width into different
+// numbers of boxes (the student-info grid: some rows have 4 wider boxes,
+// others have 6 narrower ones) — a Table only has ONE <w:tblGrid>, so
+// every row's boxes have to be expressible as some number of that one
+// grid's columns. This finds the smallest shared grid that can exactly
+// reproduce every row (by taking the union of each row's running-total
+// breakpoints), and returns, for each row, both how many of those fine
+// columns each cell should report via `columnSpan` AND that cell's width
+// as the exact sum of the real (already-rounded) grid columns it spans —
+// never rounded a second time, so a cell's declared width can never drift
+// even a single twip from the columns it's said to span.
+function buildSharedColumnGrid(rowsOfFractions, total) {
+  const EPS = 1e6; // round to 6 decimal places before comparing, to dodge float noise
+  const breakpoints = new Set([0, EPS]);
+  rowsOfFractions.forEach((fractions) => {
+    let cum = 0;
+    fractions.forEach((f) => {
+      cum += f;
+      breakpoints.add(Math.round(cum * EPS));
+    });
+  });
+  const sorted = [...breakpoints].sort((a, b) => a - b);
+  const segmentFractions = sorted.slice(1).map((b, i) => (b - sorted[i]) / EPS);
+  const columnWidths = roundedWidths(segmentFractions, total);
+
+  const layoutFor = (fractions) => {
+    let cum = 0;
+    let startIdx = 0;
+    const spans = [];
+    const widths = [];
+    fractions.forEach((f) => {
+      cum += f;
+      const endIdx = sorted.indexOf(Math.round(cum * EPS));
+      spans.push(endIdx - startIdx);
+      widths.push(columnWidths.slice(startIdx, endIdx).reduce((a, b) => a + b, 0));
+      startIdx = endIdx;
+    });
+    return { spans, widths };
+  };
+
+  return { columnWidths, layoutFor };
+}
+
 function labelCell(text, lang, theme, opts = {}) {
   const effLang = detectLang(text, lang);
   return new TableCell({
@@ -288,36 +354,46 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
   const lc = (text, opts) => labelCell(text, lang, theme, opts);
   const vc = (text, opts) => valueCell(text, lang, theme, opts);
 
-  const detailsRows = [
+  // Each row's cells as [content-builder, fraction-of-row-width] pairs —
+  // the two 4-box rows (Student Name/Father Name, Subject/Invigilator) and
+  // the two 6-box rows (Roll No./Class/Section, Time/Total/Obt. Marks)
+  // split the same overall width differently, so they're expressed here as
+  // plain fractions and reconciled onto one shared grid below rather than
+  // each getting its own independent `width` (which is what let them drift
+  // out of alignment with each other in the exported Word file).
+  const detailsRowDefs = [
     [
-      lc(L.studentName, { width: w * 0.15 }),
-      vc("", { width: w * 0.28 }),
-      lc(L.fatherName, { width: w * 0.12 }),
-      vc("", { width: w * 0.45 }),
+      [lc, L.studentName, 0.15], [vc, "", 0.28],
+      [lc, L.fatherName, 0.12], [vc, "", 0.45],
     ],
     [
-      lc(L.rollNo, { width: w * 0.17 }),
-      vc("", { width: w * 0.19 }),
-      lc(L.className, { width: w * 0.15 }),
-      vc(meta.className, { width: w * 0.16 }),
-      lc(L.section, { width: w * 0.13 }),
-      vc(meta.section, { width: w * 0.20 }),
+      [lc, L.rollNo, 0.17], [vc, "", 0.19],
+      [lc, L.className, 0.15], [vc, meta.className, 0.16],
+      [lc, L.section, 0.13], [vc, meta.section, 0.20],
     ],
     [
-      lc(L.time, { width: w * 0.17 }),
-      vc(time, { width: w * 0.19 }),
-      lc(L.totalMarks, { width: w * 0.15 }),
-      vc(total, { width: w * 0.16 }),
-      lc(L.objMarks, { width: w * 0.13 }),
-      vc("", { width: w * 0.20 }),
+      [lc, L.time, 0.17], [vc, time, 0.19],
+      [lc, L.totalMarks, 0.15], [vc, total, 0.16],
+      [lc, L.objMarks, 0.13], [vc, "", 0.20],
     ],
     [
-      lc(L.subject, { width: w * 0.15 }),
-      vc(meta.subject, { width: w * 0.28 }),
-      lc(L.invigilator, { width: w * 0.12 }),
-      vc("", { width: w * 0.45 }),
+      [lc, L.subject, 0.15], [vc, meta.subject, 0.28],
+      [lc, L.invigilator, 0.12], [vc, "", 0.45],
     ],
   ];
+
+  const { columnWidths, layoutFor } = buildSharedColumnGrid(
+    detailsRowDefs.map((row) => row.map(([, , frac]) => frac)),
+    w
+  );
+
+  const detailsRows = detailsRowDefs.map((rowDef) => {
+    const fractions = rowDef.map(([, , frac]) => frac);
+    const { spans, widths } = layoutFor(fractions);
+    return rowDef.map(([builder, text], i) =>
+      builder(text, { width: widths[i], span: spans[i] > 1 ? spans[i] : undefined })
+    );
+  });
 
   // Urdu template mirrors the row order right-to-left; simplest faithful
   // approach is to reverse each row's cell order so the labels still read
@@ -329,6 +405,7 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
   const detailsTable = new Table({
     width: { size: w, type: WidthType.DXA },
     layout: TableLayoutType.FIXED,
+    columnWidths,
     rows,
   });
 
@@ -360,6 +437,7 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
   const bannerTable = new Table({
     width: { size: w, type: WidthType.DXA },
     layout: TableLayoutType.FIXED,
+    columnWidths: [LOGO_COL_TWIPS, w - LOGO_COL_TWIPS * 2, LOGO_COL_TWIPS],
     rows: [new TableRow({ children: [logoCell(leftLogoPara), nameCell, logoCell(rightLogoPara)] })],
   });
 
@@ -434,6 +512,7 @@ function buildMcqQuestions(subPart, lang, theme) {
         width: { size: w - indent, type: WidthType.DXA },
         layout: TableLayoutType.FIXED,
         indent: { size: indent, type: WidthType.DXA },
+        columnWidths: roundedWidths([0.5, 0.5], w - indent),
         rows: [
           new TableRow({ children: row1.map(([l, t]) => optCell(l, t)) }),
           new TableRow({ children: row2.map(([l, t]) => optCell(l, t)) }),
@@ -526,14 +605,16 @@ function buildInstructionLine(subPart, type, lang, theme) {
   const marksChildren = [run(marksExpr, { bold: true, lang: verbLang, size: theme.mainSize, theme })];
   const totalChildren = [run(`/${total}`, { bold: true, lang: verbLang, size: theme.mainSize, theme })];
 
+  const colWidths = roundedWidths([0.68, 0.17, 0.15], w);
   const cells = [
-    cell(textChildren, w * 0.68, verbLang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT),
-    cell(marksChildren, w * 0.17, AlignmentType.CENTER),
-    cell(totalChildren, w * 0.15, AlignmentType.CENTER),
+    cell(textChildren, colWidths[0], verbLang === "ur" ? AlignmentType.RIGHT : AlignmentType.LEFT),
+    cell(marksChildren, colWidths[1], AlignmentType.CENTER),
+    cell(totalChildren, colWidths[2], AlignmentType.CENTER),
   ];
   return new Table({
     width: { size: w, type: WidthType.DXA },
     layout: TableLayoutType.FIXED,
+    columnWidths: lang === "ur" ? [...colWidths].reverse() : colWidths,
     rows: [new TableRow({ children: lang === "ur" ? [...cells].reverse() : cells })],
   });
 }
