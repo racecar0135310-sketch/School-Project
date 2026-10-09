@@ -153,7 +153,6 @@ export async function devDeleteSchool(devPassword, id) {
     headers: { "x-dev-password": devPassword },
   });
 }
-}
 
 // ---------------------------------------------------------------------
 // Admin dashboard
