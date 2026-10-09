@@ -130,18 +130,19 @@ function cellWidth(w) {
 // ---------------------------------------------------------------------
 // Column-width bookkeeping.
 //
-// The `docx` library needs a Table's `columnWidths` set explicitly — if
-// it's left out, the library writes a generic placeholder <w:tblGrid>
-// that doesn't match the real per-cell widths. Word treats that grid (not
-// the individual cells) as authoritative for a fixed-layout table, so
-// whatever the grid says, wins — producing exactly the "cells outside the
-// box" misalignment the live preview never shows (the preview is plain
-// HTML/CSS, which has no such grid to disagree with).
+// Word stores a fixed table's column layout in <w:tblGrid>. A single table
+// cannot safely contain rows with different numbers of cells: some Word
+// viewers use the first row to infer the grid and place the extra cells in
+// later rows outside the table. The header details grid has both four-cell
+// rows and six-cell rows, so the exporter deliberately creates one fixed
+// one-row table per visual row (see buildDetailsRowTable below). Every one
+// of those tables has its own matching grid and therefore has no cells that
+// can spill outside it.
 //
 // roundedWidths() turns fractions-of-a-total into twip integers whose sum
-// is *exactly* the total (absorbing twip-rounding drift into the last
-// column) — a 1-2 twip mismatch between the grid's sum and the table's
-// declared width is the same class of bug, just smaller.
+// is exactly the table width. Absorbing rounding drift into the last cell
+// is important: even a one-twip mismatch can make Word resize a fixed
+// table when it opens the downloaded file.
 // ---------------------------------------------------------------------
 function roundedWidths(fractions, total) {
   const raw = fractions.map((f) => Math.round(f * total));
@@ -150,48 +151,7 @@ function roundedWidths(fractions, total) {
   return raw;
 }
 
-// For a table where different rows split the same width into different
-// numbers of boxes (the student-info grid: some rows have 4 wider boxes,
-// others have 6 narrower ones) — a Table only has ONE <w:tblGrid>, so
-// every row's boxes have to be expressible as some number of that one
-// grid's columns. This finds the smallest shared grid that can exactly
-// reproduce every row (by taking the union of each row's running-total
-// breakpoints), and returns, for each row, both how many of those fine
-// columns each cell should report via `columnSpan` AND that cell's width
-// as the exact sum of the real (already-rounded) grid columns it spans —
-// never rounded a second time, so a cell's declared width can never drift
-// even a single twip from the columns it's said to span.
-function buildSharedColumnGrid(rowsOfFractions, total) {
-  const EPS = 1e6; // round to 6 decimal places before comparing, to dodge float noise
-  const breakpoints = new Set([0, EPS]);
-  rowsOfFractions.forEach((fractions) => {
-    let cum = 0;
-    fractions.forEach((f) => {
-      cum += f;
-      breakpoints.add(Math.round(cum * EPS));
-    });
-  });
-  const sorted = [...breakpoints].sort((a, b) => a - b);
-  const segmentFractions = sorted.slice(1).map((b, i) => (b - sorted[i]) / EPS);
-  const columnWidths = roundedWidths(segmentFractions, total);
 
-  const layoutFor = (fractions) => {
-    let cum = 0;
-    let startIdx = 0;
-    const spans = [];
-    const widths = [];
-    fractions.forEach((f) => {
-      cum += f;
-      const endIdx = sorted.indexOf(Math.round(cum * EPS));
-      spans.push(endIdx - startIdx);
-      widths.push(columnWidths.slice(startIdx, endIdx).reduce((a, b) => a + b, 0));
-      startIdx = endIdx;
-    });
-    return { spans, widths };
-  };
-
-  return { columnWidths, layoutFor };
-}
 
 function labelCell(text, lang, theme, opts = {}) {
   const effLang = detectLang(text, lang);
@@ -291,6 +251,36 @@ async function buildLogoParagraph(src, boxPx) {
   });
 }
 
+// A details row gets its own table. The visual result is still one
+// continuous four-row grid because the tables are emitted consecutively and
+// their cell borders touch, but Word never has to reconcile a four-cell row
+// with a six-cell row in the same <w:tbl>.
+function buildDetailsRowTable(rowDef, lang, totalWidth) {
+  const widths = roundedWidths(rowDef.map(([, , fraction]) => fraction), totalWidth);
+  const cells = rowDef.map(([builder, text], index) => builder(text, { width: widths[index] }));
+  const isRtl = lang === "ur";
+
+  return new Table({
+    width: { size: totalWidth, type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
+    // With an RTL paper the first logical cell belongs on the right. The
+    // table itself is kept LTR for maximum compatibility, so reverse both
+    // the cells and the grid widths together. Reversing only the cells would
+    // attach them to the wrong grid columns in Word.
+    columnWidths: isRtl ? [...widths].reverse() : widths,
+    borders: {
+      top: NO_BORDER,
+      bottom: NO_BORDER,
+      left: NO_BORDER,
+      right: NO_BORDER,
+      insideHorizontal: NO_BORDER,
+      insideVertical: NO_BORDER,
+    },
+    cellSpacing: { value: 0, type: "dxa" },
+    rows: [new TableRow({ children: isRtl ? [...cells].reverse() : cells, cantSplit: true })],
+  });
+}
+
 // ---------------------------------------------------------------------
 // Header: logo banner (left logo / school name & address / right logo —
 // same layout as the diary) plus the student/roll/class/time/marks details
@@ -329,12 +319,11 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
         spacing: { before: 120, after: 120 },
       })
     : null;
-
-  // Details grid — 6 columns, 5 rows, matching the printed template. Left
-  // side is filled by the student by hand; right side is filled from the
-  // teacher's form. Father Name and Invigilator get a noticeably wider
-  // value box than the others (0.45 vs the usual 0.33 of the row) since
-  // those are always hand-filled and benefit from the extra writing room.
+// Student details — the first/fourth rows have four cells and the middle
+  // rows have six. They are intentionally separate one-row tables instead
+  // of mixed rows in one table; Word and other DOCX viewers then keep every
+  // row inside the same page-width rectangle.
+  
   const time = meta.totalTime || " ";
   const total = String(totalMarks);
 
@@ -354,13 +343,7 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
   const lc = (text, opts) => labelCell(text, lang, theme, opts);
   const vc = (text, opts) => valueCell(text, lang, theme, opts);
 
-  // Each row's cells as [content-builder, fraction-of-row-width] pairs —
-  // the two 4-box rows (Student Name/Father Name, Subject/Invigilator) and
-  // the two 6-box rows (Roll No./Class/Section, Time/Total/Obt. Marks)
-  // split the same overall width differently, so they're expressed here as
-  // plain fractions and reconciled onto one shared grid below rather than
-  // each getting its own independent `width` (which is what let them drift
-  // out of alignment with each other in the exported Word file).
+
   const detailsRowDefs = [
     [
       [lc, L.studentName, 0.15], [vc, "", 0.28],
@@ -381,33 +364,8 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
       [lc, L.invigilator, 0.12], [vc, "", 0.45],
     ],
   ];
+const detailsTables = detailsRowDefs.map((rowDef) => buildDetailsRowTable(rowDef, lang, w));
 
-  const { columnWidths, layoutFor } = buildSharedColumnGrid(
-    detailsRowDefs.map((row) => row.map(([, , frac]) => frac)),
-    w
-  );
-
-  const detailsRows = detailsRowDefs.map((rowDef) => {
-    const fractions = rowDef.map(([, , frac]) => frac);
-    const { spans, widths } = layoutFor(fractions);
-    return rowDef.map(([builder, text], i) =>
-      builder(text, { width: widths[i], span: spans[i] > 1 ? spans[i] : undefined })
-    );
-  });
-
-  // Urdu template mirrors the row order right-to-left; simplest faithful
-  // approach is to reverse each row's cell order so the labels still read
-  // naturally right-to-left in Word.
-  const rows = (lang === "ur" ? detailsRows.map((r) => [...r].reverse()) : detailsRows).map(
-    (cells) => new TableRow({ children: cells, cantSplit: true })
-  );
-
-  const detailsTable = new Table({
-    width: { size: w, type: WidthType.DXA },
-    layout: TableLayoutType.FIXED,
-    columnWidths,
-    rows,
-  });
 
   // Logo banner — left logo / school name block / right logo, same layout
   // the diary uses. Falls back to the diary's default logos when a school
@@ -443,7 +401,7 @@ async function buildHeader({ school, meta, lang, totalMarks, theme }) {
 
   const bits = [bannerTable];
   if (titleLine) bits.push(titleLine);
-  bits.push(detailsTable);
+ bits.push(...detailsTables);
   return bits;
 }
 
