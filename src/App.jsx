@@ -24,8 +24,8 @@ export default function App() {
         <Route path="/school/:schoolId/admin" element={<AdminPage />} />
         <Route path="/dev" element={<DevPortalPage />} />
           {/* Hidden, developer-only setup portal. */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <Route path="*" element={<Navigate to="/" replace />} />
     </BrowserRouter>
   );
 }
