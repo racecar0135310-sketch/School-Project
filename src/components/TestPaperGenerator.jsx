@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   newPart,
   newSubPart,
@@ -304,8 +304,48 @@ export default function TestPaperGenerator({ school }) {
       {/* ---------------- LIVE PREVIEW ---------------- */}
       <section className="lg:sticky lg:top-4 self-start">
         <p className="text-xs text-slate-500 mb-2">{t.preview}</p>
-        <TestPaperPreview school={school} meta={meta} parts={parts} lang={lang} t={t} totalMarks={totalMarks} style={style} />
+        <ResponsiveTestPaperFrame>
+          <TestPaperPreview school={school} meta={meta} parts={parts} lang={lang} t={t} totalMarks={totalMarks} style={style} />
+        </ResponsiveTestPaperFrame>
       </section>
+    </div>
+  );
+}
+
+// The paper keeps a fixed 560px internal canvas so its on-screen proportions
+// match the exported Word document. Scale that canvas down on narrow phones
+// instead of allowing the preview to create horizontal page overflow.
+function ResponsiveTestPaperFrame({ children }) {
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  const [height, setHeight] = useState(null);
+
+  useEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return undefined;
+    const update = () => {
+      const width = outer.offsetWidth;
+      const naturalHeight = inner.offsetHeight;
+      if (!width || !naturalHeight) return;
+      const nextScale = Math.min(width / 560, 1);
+      setScale(nextScale);
+      setHeight(naturalHeight * nextScale);
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(update);
+    observer.observe(outer);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  });
+
+  return (
+    <div ref={outerRef} className="w-full overflow-hidden rounded border border-slate-300" style={{ height: height ?? undefined }}>
+      <div ref={innerRef} style={{ width: 560, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+        {children}
+      </div>
     </div>
   );
 }

@@ -244,6 +244,7 @@ function ResponsiveDiaryFrame({ children }) {
     };
 
     update();
+    if (typeof ResizeObserver === "undefined") return undefined;
     const ro = new ResizeObserver(update);
     ro.observe(outer);
     ro.observe(inner);

@@ -12,21 +12,15 @@ const schoolSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     address: { type: String, default: "", trim: true },
     phone: { type: String, default: "", trim: true },
-    // The code students/teachers enter to open the diary generator for this
-    // school, and the password for this school's own admin portal. Both are
-    // set and changed from the /dev portal.
+    // Legacy diary/admin credentials remain for backwards compatibility with
+    // the original /school/:id pages. New login uses the hashed fields below.
     diaryCode: { type: String, required: true, trim: true },
     adminPassword: { type: String, required: true, trim: true },
-    // The diary's theme colors for this school — background/border/box/text
-    // — set from this school's own Admin Portal (not the /dev portal).
-    // Mixed rather than a strict sub-schema, since it's just four hex strings.
+    adminUserId: { type: String, default: "", trim: true, lowercase: true },
+    adminPasswordHash: { type: String, default: "" },
+    teacherPasswordHash: { type: String, default: "" },
+    studentPasswordHash: { type: String, default: "" },
     colors: { type: mongoose.Schema.Types.Mixed, default: DEFAULT_COLORS },
-    // The two logos shown on the diary header (left + right), set from the
-    // Dev Portal when the school is added/edited. Stored as data URIs
-    // (base64) so no separate file storage/CDN is needed — logos are small
-    // and this keeps everything in one MongoDB document. Whatever aspect
-    // ratio is uploaded is fine: the diary always fits it into a fixed box
-    // with object-contain, so it's never stretched or distorted.
     leftLogo: { type: String, default: "" },
     rightLogo: { type: String, default: "" },
   },

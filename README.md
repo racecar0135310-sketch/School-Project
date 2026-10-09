@@ -1,53 +1,118 @@
-# School Homework Diary Generator
+# SchoolFlow LMS
 
-A small React + Tailwind app. The teacher fills in the class/date details and
-adds one row per subject (subject name + homework text), clicks
-**"Done — Save as Image"**, and a PNG of the diary (in the school's printed
-format) downloads automatically. Everything runs in the browser — no backend
-or database needed, Node is only used to run the dev server / build.
+SchoolFlow is a mobile-first school workspace built around the original
+Daily Home Work Diary and Test Paper Generator. It now has one central login
+for Admin, Teacher and Student accounts while the original school routes and
+Dev Portal remain available for existing schools.
 
-## 1. Install prerequisites
-You need **Node.js 18+** installed (https://nodejs.org). Check with:
-```
-node -v
-npm -v
-```
+## Product flow
 
-## 2. Install dependencies
-Unzip the project, then in a terminal:
-```
-cd school-diary-app
+1. Open `/` for the public landing page and choose **Sign in**.
+2. Enter the account ID and password. The API detects the school and role —
+   there is no school picker in the normal login flow.
+3. The user is sent to `/app`, where a responsive sidebar/hamburger menu shows
+   only the features for that role.
+4. The hidden `/dev` route is still used by the site developer to create a
+   school and its first Admin account.
+5. The original `/school/:schoolId` generator route and
+   `/school/:schoolId/admin` compatibility route are intentionally preserved.
+
+## Role features
+
+- **Admin**: school overview, teacher CRUD, student CRUD, profile/theme
+  settings, and separate shared passwords for teachers and students.
+- **Teacher**: attendance, gradebook, homework/attachment publishing, study
+  material/test links or files, plus the existing Diary and Test Paper
+  Generators.
+- **Student**: today's homework/diary, tests, downloadable resources and
+  results/feedback.
+
+## Run locally
+
+Install the client and server dependencies:
+
+```bash
 npm install
+cd server && npm install
 ```
 
-## 3. Run it locally
+Copy `server/.env.example` to `server/.env` and replace the placeholder values:
+
+PowerShell:
+
+```powershell
+Copy-Item server/.env.example server/.env
+notepad server/.env
 ```
+
+Set:
+
+- `MONGODB_URI` — a real MongoDB Atlas/local MongoDB connection string
+- `DEV_PASSWORD` — password for the hidden `/dev` portal
+- `AUTH_SECRET` — long random value used to sign 12-hour login sessions
+- `PORT` — optional API port (defaults to `4000`)
+
+Do not use the example `mongodb://user:password@host1...` value unchanged.
+The API intentionally stops with a clear configuration message when
+`MONGODB_URI` is missing.
+
+Run the API in one terminal:
+
+```powershell
+cd server
+npm start
+# or, during development:
 npm run dev
 ```
-Open the URL it prints (usually http://localhost:5173).
 
-## 4. Build for deployment (e.g. Netlify)
+Run the Vite client from the project root in a second terminal — not from the
+`server` directory:
+
+```powershell
+cd ..
+npm run dev
 ```
-npm run build
-```
-This creates a `dist/` folder — same as your other Netlify project, drag
-that `dist` folder into Netlify, or connect the Git repo and set:
-- Build command: `npm run build`
-- Publish directory: `dist`
 
-## How it works
-- `src/App.jsx` has the form (left) and a live preview of the diary (right)
-  that updates as you type.
-- Clicking "Done — Save as Image" uses the `html2canvas` library to turn the
-  preview `<div>` into a PNG and triggers a download — no server round trip.
-- The header, Bismillah line, and the two Durood lines at the bottom are
-  fixed template text (same every time), matching the printed diary. Class,
-  section, date, day, incharge, subjects and note are all editable.
+You can also use `npm run dev:client` from the root and
+`npm run dev:server` from the root after `server/.env` is configured.
 
-## Customizing
-- School name/address/phone and the fixed Arabic lines are constants near
-  the top of `src/App.jsx` — edit them once if needed.
-- To add a real school crest/logo, replace the two placeholder circles in
-  `DiaryPreview` with `<img src="/logo.png" ... />` (put the image in a
-  `public/` folder).
-- Colors/spacing use Tailwind utility classes, so you can restyle freely.
+Vite proxies `/api` to `http://localhost:4000`. For a separately hosted API,
+set `VITE_API_URL` when building the client. Both Vite and the API bind in a
+way that works with the Arena live preview.
+
+## Database schema additions
+
+The existing `School` and `Teacher` documents remain compatible. New fields
+on `School` include `adminUserId`, `adminPasswordHash`,
+`teacherPasswordHash`, and `studentPasswordHash`. The old `adminPassword` and
+`diaryCode` fields stay for the original generator/admin URLs.
+
+New collections:
+
+- `User`: globally unique login ID, role (`admin`, `teacher`, `student`),
+  school and profile reference. It does not store passwords.
+- `Student`: student profile, class/section, roll number and parent details.
+- `Attendance`: one class register per teacher/date.
+- `Grade`: student assessment marks, maximum marks, term and feedback.
+- `Homework`: class-scoped assignment/note with optional link or small file.
+- `Material`: class-scoped study material or test resource with optional link
+  or small file.
+
+Teacher and student passwords are unified per school and stored as salted
+`scrypt` hashes on the school document. The admin UI updates them without
+returning the secret to the browser. New admin passwords are hashed as well;
+legacy plaintext fields are only used as a compatibility fallback for old
+schools until their credentials are rotated.
+
+The server calls `syncIndexes()` for all models at startup. Existing schools
+can be migrated without losing diary data: open the Dev Portal, set an Admin
+login ID if needed, then sign in and configure the shared passwords from
+**School settings**.
+
+## Existing generator downloads
+
+- Diary downloads are still client-side PNG exports.
+- Test papers are still client-side `.docx` exports.
+- The DOCX header exporter now uses independent fixed-width tables for each
+  mixed-width header row, preventing cells from appearing outside the header
+  rectangle in Word/other DOCX viewers.
