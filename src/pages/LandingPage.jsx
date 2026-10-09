@@ -17,6 +17,7 @@ export default function LandingPage() {
         </Link>
         <nav className="flex items-center gap-3">
           <a href="#about" className="hidden sm:inline text-sm text-slate-300 hover:text-white transition">About</a>
+          <Link to="/schools" className="hidden sm:inline text-sm text-slate-300 hover:text-white transition">School diary</Link>
           <Link to="/login" className="rounded-full bg-white text-slate-950 px-4 py-2 text-sm font-semibold hover:bg-cyan-100 transition">Sign in</Link>
         </nav>
       </header>

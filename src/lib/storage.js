@@ -83,7 +83,7 @@ export async function createTeacher(schoolId, teacher) {
     method: "POST",
     body: JSON.stringify({ ...teacher, schoolId }),
   });
-  return { ...updated, id: updated.id || updated._id };
+  return { ...created, id: created.id || created._id };
 }
 
 export async function updateTeacher(id, teacher) {
@@ -101,15 +101,7 @@ export async function deleteTeacher(id) {
 export function findTeacherByName(teachers, name) {
   const target = (name || "").trim().toLowerCase();
   if (!target) return null;
-   return (
-    teachers.find((t) => t.inchargeName.trim().toLowerCase() === target) ||
-    null
-  );
-  return (
-    teachers.find((t) => t.inchargeName.trim().toLowerCase() === target) ||
-    null
-  );
-   return teachers.find((teacher) => (teacher.inchargeName || "").trim().toLowerCase() === target) || null;
+  return teachers.find((teacher) => (teacher.inchargeName || "").trim().toLowerCase() === target) || null;
 }
 
 // ---------------------------------------------------------------------

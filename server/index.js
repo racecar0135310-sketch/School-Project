@@ -1,17 +1,22 @@
 import "dotenv/config";
+import crypto from "node:crypto";
+import { promisify } from "node:util";
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import Teacher from "./Teacher.js";
 import School from "./School.js";
+import Student from "./Student.js";
 
 const app = express();
+const scrypt = promisify(crypto.scrypt);
 app.use(cors());
 // Raised from the default ~100kb so uploaded logos (sent as base64 data
 // URIs from the Dev Portal) fit comfortably in the request body.
 app.use(express.json({ limit: "10mb" }));
 
 const { MONGODB_URI, PORT = 4000, DEV_PASSWORD } = process.env;
+const SESSION_SECRET = process.env.SESSION_SECRET || DEV_PASSWORD;
 
 if (!MONGODB_URI) {
   console.error(
@@ -69,6 +74,113 @@ function requireDevAuth(req, res, next) {
   next();
 }
 
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derivedKey = await scrypt(password, salt, 64);
+  return `scrypt$${salt}$${derivedKey.toString("hex")}`;
+}
+
+async function verifyPassword(password, storedHash) {
+  if (!storedHash) return false;
+  const [algorithm, salt, expectedHex] = storedHash.split("$");
+  if (algorithm !== "scrypt" || !salt || !expectedHex) return false;
+  const expected = Buffer.from(expectedHex, "hex");
+  const actual = await scrypt(password, salt, expected.length);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function signSession(payload) {
+  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })).toString("base64url");
+  const signature = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+function requireAuth(req, res, next) {
+  const [body, signature, extra] = (req.header("authorization") || "").replace(/^Bearer\s+/i, "").split(".");
+  if (!body || !signature || extra || !SESSION_SECRET) {
+    return res.status(401).json({ error: "Please sign in to continue." });
+  }
+  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest();
+  const received = Buffer.from(signature, "base64url");
+  if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+    return res.status(401).json({ error: "Your session is invalid. Please sign in again." });
+  }
+  try {
+    const session = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (!session.exp || session.exp <= Date.now()) {
+      return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+    }
+    req.session = session;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Your session is invalid. Please sign in again." });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.session?.role !== "admin") {
+    return res.status(403).json({ error: "Administrator access is required." });
+  }
+  next();
+}
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const userId = String(req.body.userId || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+    if (!userId || !password) return res.status(400).json({ error: "Enter your login ID and password." });
+
+    const school = await School.findOne({ adminUserId: userId });
+    if (!school) return res.status(401).json({ error: "Invalid login ID or password." });
+    let valid = await verifyPassword(password, school.adminPasswordHash);
+    // One-time compatibility for existing schools until their credentials are
+    // edited in the Dev Portal and saved as a modern login.
+    if (!valid && !school.adminPasswordHash && school.adminPassword) {
+      valid = password === school.adminPassword;
+      if (valid) {
+        school.adminPasswordHash = await hashPassword(password);
+        school.adminPassword = "";
+        await school.save();
+      }
+    }
+    if (!valid) return res.status(401).json({ error: "Invalid login ID or password." });
+
+    const user = {
+      userId: school.adminUserId,
+      name: school.name,
+      role: "admin",
+      schoolId: String(school._id),
+    };
+    res.json({
+      token: signSession(user),
+      user,
+      school: {
+        id: String(school._id),
+        name: school.name,
+        address: school.address,
+        phone: school.phone,
+        colors: school.colors,
+      },
+    });
+  } catch (err) {
+    console.error("POST /api/auth/login failed:", err);
+    res.status(500).json({ error: "Unable to sign in right now." });
+  }
+});
+
+app.get("/api/me", requireAuth, async (req, res) => {
+  try {
+    const school = await School.findById(req.session.schoolId);
+    if (!school) return res.status(401).json({ error: "This school account no longer exists." });
+    res.json({
+      user: { userId: req.session.userId, name: school.name, role: "admin", schoolId: String(school._id) },
+      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to load your account." });
+  }
+});
+
 // A quick way for the frontend to check a dev password before showing the
 // portal, without yet needing to know a school id.
 app.post("/api/dev/verify", (req, res) => {
@@ -89,6 +201,16 @@ function publicSchool(s) {
     leftLogo: s.leftLogo,
     rightLogo: s.rightLogo,
   };
+}
+
+function devSchool(s) {
+  const school = s.toObject ? s.toObject() : { ...s };
+  school.hasAdminPassword = Boolean(school.adminPasswordHash || school.adminPassword);
+  delete school.adminPassword;
+  delete school.adminPasswordHash;
+  delete school.teacherPasswordHash;
+  delete school.studentPasswordHash;
+  return { ...school, id: String(school._id || school.id) };
 }
 
 app.get("/api/schools", async (req, res) => {
@@ -124,7 +246,10 @@ app.post("/api/schools/:id/verify-admin", async (req, res) => {
   try {
     const school = await School.findById(req.params.id);
     if (!school) return res.status(404).json({ error: "School not found." });
-    res.json({ ok: req.body.password === school.adminPassword });
+    const ok = school.adminPasswordHash
+      ? await verifyPassword(String(req.body.password || ""), school.adminPasswordHash)
+      : req.body.password === school.adminPassword;
+    res.json({ ok });
   } catch (err) {
     res.status(500).json({ error: "Failed to verify password." });
   }
@@ -158,7 +283,7 @@ app.put("/api/schools/:id/colors", async (req, res) => {
 app.get("/api/dev/schools", requireDevAuth, async (req, res) => {
   try {
     const schools = await School.find().sort({ name: 1 });
-    res.json(schools);
+    res.json(schools.map(devSchool));
   } catch (err) {
     res.status(500).json({ error: "Failed to load schools." });
   }
@@ -166,25 +291,34 @@ app.get("/api/dev/schools", requireDevAuth, async (req, res) => {
 
 app.post("/api/dev/schools", requireDevAuth, async (req, res) => {
   try {
-    const { name, address, phone, diaryCode, adminPassword, leftLogo, rightLogo } = req.body;
+    const { name, address, phone, diaryCode, adminUserId, adminPassword, leftLogo, rightLogo } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: "name is required." });
     if (!diaryCode || !diaryCode.trim())
       return res.status(400).json({ error: "diaryCode is required." });
+    if (!adminUserId || !adminUserId.trim())
+      return res.status(400).json({ error: "Admin login ID is required." });
     if (!adminPassword || !adminPassword.trim())
       return res.status(400).json({ error: "adminPassword is required." });
+
+    const normalizedAdminId = adminUserId.trim().toLowerCase();
+    if (await School.exists({ adminUserId: normalizedAdminId })) {
+      return res.status(409).json({ error: "That admin login ID is already in use." });
+    }
 
     const school = await School.create({
       name: name.trim(),
       address: (address || "").trim(),
       phone: (phone || "").trim(),
       diaryCode: diaryCode.trim(),
-      adminPassword: adminPassword.trim(),
+      adminPassword: "",
+      adminUserId: normalizedAdminId,
+      adminPasswordHash: await hashPassword(adminPassword),
       // Logos are optional — a school can be added without them and have
       // them uploaded later by editing it from the Dev Portal.
       leftLogo: leftLogo || "",
       rightLogo: rightLogo || "",
     });
-    res.status(201).json(school);
+    res.status(201).json(devSchool(school));
   } catch (err) {
     // Log the full error server-side (visible in your Render logs) and, on
     // this password-protected dev route, also send it back in the response
@@ -208,7 +342,18 @@ app.post("/api/dev/schools", requireDevAuth, async (req, res) => {
 
 app.put("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
   try {
-    const { name, address, phone, diaryCode, adminPassword, leftLogo, rightLogo } = req.body;
+    const { name, address, phone, diaryCode, adminUserId, adminPassword, leftLogo, rightLogo } = req.body;
+    const normalizedAdminId = String(adminUserId || "").trim().toLowerCase();
+    if (!normalizedAdminId) return res.status(400).json({ error: "Admin login ID is required." });
+    if (await School.exists({ adminUserId: normalizedAdminId, _id: { $ne: req.params.id } })) {
+      return res.status(409).json({ error: "That admin login ID is already in use." });
+    }
+    const existingSchool = await School.findById(req.params.id);
+    if (!existingSchool) return res.status(404).json({ error: "School not found." });
+    const nextPasswordHash = adminPassword?.trim()
+      ? await hashPassword(adminPassword.trim())
+      : existingSchool.adminPasswordHash || (existingSchool.adminPassword ? await hashPassword(existingSchool.adminPassword) : "");
+    if (!nextPasswordHash) return res.status(400).json({ error: "Set an admin login password before saving this school." });
     const school = await School.findByIdAndUpdate(
       req.params.id,
       {
@@ -216,7 +361,9 @@ app.put("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
         address: (address || "").trim(),
         phone: (phone || "").trim(),
         diaryCode: (diaryCode || "").trim(),
-        adminPassword: (adminPassword || "").trim(),
+        adminPassword: "",
+        adminUserId: normalizedAdminId,
+        adminPasswordHash: nextPasswordHash,
         // leftLogo/rightLogo are only overwritten when a value is actually
         // sent, so leaving the upload fields untouched while editing other
         // details (like the address) doesn't wipe out an existing logo.
@@ -226,7 +373,7 @@ app.put("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!school) return res.status(404).json({ error: "School not found." });
-    res.json(school);
+    res.json(devSchool(school));
   } catch (err) {
     console.error("PUT /api/dev/schools/:id failed:", err);
     if (err.code === 11000) {
@@ -251,6 +398,169 @@ app.delete("/api/dev/schools/:id", requireDevAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete school." });
+  }
+});
+
+// ---------------------------------------------------------------------
+// Admin dashboard API — all operations are restricted to the signed-in
+// administrator's own school.
+// ---------------------------------------------------------------------
+app.get("/api/admin/summary", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const schoolId = req.session.schoolId;
+    const [school, teachers, students, classes] = await Promise.all([
+      School.findById(schoolId),
+      Teacher.countDocuments({ schoolId }),
+      Student.countDocuments({ schoolId }),
+      Student.distinct("className", { schoolId, className: { $ne: "" } }),
+    ]);
+    if (!school) return res.status(404).json({ error: "School not found." });
+    res.json({
+      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors },
+      teachers,
+      students,
+      classes: classes.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to load the school summary." });
+  }
+});
+
+app.get("/api/admin/teachers", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const teachers = await Teacher.find({ schoolId: req.session.schoolId }).sort({ createdAt: 1 });
+    res.json(teachers.map((teacher) => ({
+      id: String(teacher._id),
+      userId: teacher.userId || "",
+      name: teacher.inchargeName,
+      className: teacher.className,
+      section: teacher.section,
+      subjects: teacher.subjects,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: "Unable to load teachers." });
+  }
+});
+
+app.post("/api/admin/teachers", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId, name, className, section, subjects } = req.body;
+    if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Teacher ID and name are required." });
+    const teacher = await Teacher.create({
+      schoolId: req.session.schoolId,
+      userId: userId.trim().toLowerCase(),
+      inchargeName: name.trim(),
+      className: (className || "").trim(),
+      section: (section || "").trim(),
+      subjects: Array.isArray(subjects) ? subjects : [],
+    });
+    res.status(201).json({ id: String(teacher._id) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "That teacher ID is already in use in this school." });
+    res.status(500).json({ error: "Unable to create teacher." });
+  }
+});
+
+app.put("/api/admin/teachers/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId, name, className, section, subjects } = req.body;
+    if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Teacher ID and name are required." });
+    const teacher = await Teacher.findOneAndUpdate(
+      { _id: req.params.id, schoolId: req.session.schoolId },
+      { userId: userId.trim().toLowerCase(), inchargeName: name.trim(), className: (className || "").trim(), section: (section || "").trim(), subjects: Array.isArray(subjects) ? subjects : [] },
+      { new: true, runValidators: true }
+    );
+    if (!teacher) return res.status(404).json({ error: "Teacher not found." });
+    res.json({ id: String(teacher._id) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "That teacher ID is already in use in this school." });
+    res.status(500).json({ error: "Unable to update teacher." });
+  }
+});
+
+app.delete("/api/admin/teachers/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const teacher = await Teacher.findOneAndDelete({ _id: req.params.id, schoolId: req.session.schoolId });
+    if (!teacher) return res.status(404).json({ error: "Teacher not found." });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to remove teacher." });
+  }
+});
+
+app.get("/api/admin/students", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const students = await Student.find({ schoolId: req.session.schoolId }).sort({ createdAt: 1 });
+    res.json(students.map((student) => ({ ...student.toObject(), id: String(student._id) })));
+  } catch (err) {
+    res.status(500).json({ error: "Unable to load students." });
+  }
+});
+
+app.post("/api/admin/students", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId, name, className, section, rollNumber, parentName, parentPhone } = req.body;
+    if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Student ID and name are required." });
+    const student = await Student.create({
+      schoolId: req.session.schoolId,
+      userId: userId.trim().toLowerCase(),
+      name: name.trim(),
+      className: (className || "").trim(),
+      section: (section || "").trim(),
+      rollNumber: (rollNumber || "").trim(),
+      parentName: (parentName || "").trim(),
+      parentPhone: (parentPhone || "").trim(),
+    });
+    res.status(201).json({ id: String(student._id) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "That student ID is already in use in this school." });
+    res.status(500).json({ error: "Unable to create student." });
+  }
+});
+
+app.put("/api/admin/students/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { userId, name, className, section, rollNumber, parentName, parentPhone } = req.body;
+    if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Student ID and name are required." });
+    const student = await Student.findOneAndUpdate(
+      { _id: req.params.id, schoolId: req.session.schoolId },
+      { userId: userId.trim().toLowerCase(), name: name.trim(), className: (className || "").trim(), section: (section || "").trim(), rollNumber: (rollNumber || "").trim(), parentName: (parentName || "").trim(), parentPhone: (parentPhone || "").trim() },
+      { new: true, runValidators: true }
+    );
+    if (!student) return res.status(404).json({ error: "Student not found." });
+    res.json({ id: String(student._id) });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "That student ID is already in use in this school." });
+    res.status(500).json({ error: "Unable to update student." });
+  }
+});
+
+app.delete("/api/admin/students/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const student = await Student.findOneAndDelete({ _id: req.params.id, schoolId: req.session.schoolId });
+    if (!student) return res.status(404).json({ error: "Student not found." });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to remove student." });
+  }
+});
+
+app.put("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { name, address, phone, colors, teacherPassword, studentPassword } = req.body;
+    const updates = {
+      name: (name || "").trim(),
+      address: (address || "").trim(),
+      phone: (phone || "").trim(),
+      ...(colors && typeof colors === "object" ? { colors } : {}),
+      ...(teacherPassword ? { teacherPasswordHash: await hashPassword(teacherPassword) } : {}),
+      ...(studentPassword ? { studentPasswordHash: await hashPassword(studentPassword) } : {}),
+    };
+    const school = await School.findByIdAndUpdate(req.session.schoolId, updates, { new: true, runValidators: true });
+    if (!school) return res.status(404).json({ error: "School not found." });
+    res.json({ school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors } });
+  } catch (err) {
+    res.status(500).json({ error: "Unable to save school settings." });
   }
 });
 

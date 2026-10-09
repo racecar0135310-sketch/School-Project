@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import AccessGate from "../components/AccessGate.jsx";
+import SiteHeader from "../components/SiteHeader.jsx";
 import {
   devListSchools,
   devCreateSchool,
@@ -13,6 +15,7 @@ const emptyForm = {
   address: "",
   phone: "",
   diaryCode: "",
+  adminUserId: "",
   adminPassword: "",
   leftLogo: "",
   rightLogo: "",
@@ -55,7 +58,7 @@ export default function DevPortalPage() {
       const list = await devListSchools(pwd);
       setSchools(list);
     } catch (err) {
-      setError("Couldn't reach the server. Check your connection and try again.");
+      setError(err.message || "Couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -73,7 +76,7 @@ export default function DevPortalPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.diaryCode.trim() || !form.adminPassword.trim()) return;
+    if (!form.name.trim() || !form.diaryCode.trim() || !form.adminUserId.trim() || (!editingId && !form.adminPassword.trim())) return;
 
     setSubmitting(true);
     setError("");
@@ -103,7 +106,8 @@ export default function DevPortalPage() {
       address: s.address || "",
       phone: s.phone || "",
       diaryCode: s.diaryCode,
-      adminPassword: s.adminPassword,
+      adminUserId: s.adminUserId || "",
+      adminPassword: "",
       leftLogo: s.leftLogo || "",
       rightLogo: s.rightLogo || "",
     });
@@ -172,23 +176,25 @@ export default function DevPortalPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <header className="bg-slate-900 text-white py-4 px-4 sm:px-6 shadow">
-        <h1 className="text-base sm:text-lg font-semibold">Dev Portal — All Schools</h1>
-        <p className="text-xs sm:text-sm text-slate-300">
-          Add schools, and set or change each one's diary code and admin password.
-        </p>
-      </header>
+    <div className="min-h-screen bg-slate-50">
+      <SiteHeader dark title="System setup" />
+      <div className="bg-gradient-to-r from-slate-950 via-blue-950 to-slate-900 text-white px-4 py-7 sm:px-6">
+        <div className="max-w-5xl mx-auto">
+          <p className="text-xs font-bold uppercase tracking-[.2em] text-cyan-300">Developer workspace</p>
+          <h1 className="mt-2 text-2xl font-black">Manage schools</h1>
+          <p className="mt-1 text-sm text-slate-300">Create each school's diary access and its administrator's SchoolFlow login.</p>
+        </div>
+      </div>
 
-      <main className="max-w-3xl mx-auto p-3 sm:p-4 space-y-6">
+      <main className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-md px-4 py-2">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-5 space-y-3">
-          <h2 className="font-semibold text-slate-800">
+        <form onSubmit={handleSubmit} className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-7 shadow-sm space-y-5">
+          <h2 className="font-bold text-slate-900 text-lg">
             {editingId ? "Edit school" : "Add a new school"}
           </h2>
           <div className="grid grid-cols-2 gap-3">
@@ -220,12 +226,21 @@ export default function DevPortalPage() {
               placeholder="e.g. 135135"
             />
             <Field
-              label="Admin portal password"
+              label="Admin login ID"
+              value={form.adminUserId}
+              onChange={(v) => setForm((f) => ({ ...f, adminUserId: v }))}
+              placeholder="e.g. green-valley-admin"
+              required
+            />
+            <Field
+              label={editingId ? "Reset admin login password (optional)" : "Admin login password"}
               value={form.adminPassword}
               onChange={(v) => setForm((f) => ({ ...f, adminPassword: v }))}
-              placeholder="e.g. Mutahhar@135"
+              placeholder={editingId ? "Leave blank to keep the current password" : "Create a secure password"}
+              required={!editingId}
             />
           </div>
+          <p className="text-xs text-slate-500">The admin uses this ID and password at <a href="/login" className="font-semibold text-blue-700 hover:underline">Sign in</a>. The same password also remains valid for the legacy school admin page.</p>
 
           <div>
             <p className="text-xs font-medium text-slate-500 mb-1">Diary logos</p>
@@ -255,7 +270,7 @@ export default function DevPortalPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-medium rounded-md px-4 py-2 text-sm"
+              className="rounded-xl bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-bold px-4 py-2.5 text-sm transition"
             >
               {submitting ? "Saving…" : editingId ? "Save changes" : "Add school"}
             </button>
@@ -271,8 +286,8 @@ export default function DevPortalPage() {
           </div>
         </form>
 
-        <div className="bg-white rounded-lg shadow p-5">
-          <h2 className="font-semibold text-slate-800 mb-3">Schools</h2>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-7 shadow-sm">
+          <h2 className="font-bold text-slate-900 text-lg mb-3">Schools</h2>
           {loading ? (
             <p className="text-sm text-slate-400">Loading…</p>
           ) : schools.length === 0 ? (
@@ -287,14 +302,14 @@ export default function DevPortalPage() {
                       <LogoThumb src={s.rightLogo} />
                     </div>
                     <div>
-                    <p className="font-medium text-slate-800">{s.name}</p>
+                    <p className="font-bold text-slate-900">{s.name}</p>
                     <p className="text-xs text-slate-500">{s.address}</p>
                     <p className="text-xs text-slate-500">{s.phone}</p>
+                    <p className="text-xs text-slate-500 mt-1">Admin login ID: <span className="font-mono font-semibold">{s.adminUserId || "Not set — edit this school"}</span></p>
                     <p className="text-xs text-slate-400 mt-1">
                       {revealedId === s.id ? (
                         <>
-                          Code: <span className="font-mono">{s.diaryCode}</span> · Admin
-                          password: <span className="font-mono">{s.adminPassword}</span>
+                          Diary code: <span className="font-mono">{s.diaryCode}</span> · Admin login: <span className="font-mono">{s.adminUserId || "not set"}</span> · Password: <span>protected; reset it by editing the school</span>
                         </>
                       ) : (
                         <button
@@ -305,19 +320,22 @@ export default function DevPortalPage() {
                         </button>
                       )}
                     </p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Diary link: {window.location.origin}/school/{s.id}
+                    <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+                      <Link className="font-semibold text-blue-700 hover:underline" to={`/school/${s.id}`}>Open diary tools ↗</Link>
+                      <Link className="font-semibold text-blue-700 hover:underline" to="/login">Open admin sign-in ↗</Link>
                     </p>
                     </div>
                   </div>
                   <div className="flex gap-3 text-sm shrink-0">
                     <button
+                      type="button"
                       onClick={() => handleEdit(s)}
                       className="text-emerald-700 hover:text-emerald-900"
                     >
                       Edit
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDelete(s.id)}
                       className="text-red-500 hover:text-red-700"
                     >
@@ -334,13 +352,14 @@ export default function DevPortalPage() {
   );
 }
 
-function Field({ label, value, onChange, placeholder, full }) {
+function Field({ label, value, onChange, placeholder, full, required = false }) {
   return (
     <label className={`block ${full ? "col-span-2" : ""}`}>
       <span className="text-xs font-medium text-slate-500">{label}</span>
       <input
         className="mt-1 w-full border border-slate-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-600"
         value={value}
+        required={required}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -410,4 +429,4 @@ function LogoField({ label, value, onUpload, onRemove }) {
       </div>
     </div>
   );
-}
+} Purchase network physical take up cap, doesn't all set physician to phrase a new screen, us in a

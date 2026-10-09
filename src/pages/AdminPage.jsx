@@ -11,6 +11,7 @@ import {
 } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 import ColorField from "../components/ColorField.jsx";
+import SiteHeader from "../components/SiteHeader.jsx";
 import { DEFAULT_COLORS } from "../lib/colors.js";
 
 const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: "" };
@@ -173,6 +174,7 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
+      <SiteHeader title="School administrator" />
       <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-base sm:text-lg font-semibold">

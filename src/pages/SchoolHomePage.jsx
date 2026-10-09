@@ -4,6 +4,7 @@ import { getSchool, verifyDiaryCode } from "../lib/storage.js";
 import AccessGate from "../components/AccessGate.jsx";
 import DiaryGenerator from "../components/DiaryGenerator.jsx";
 import TestPaperGenerator from "../components/TestPaperGenerator.jsx";
+import SiteHeader from "../components/SiteHeader.jsx";
 
 // This replaces the old DiaryPage as the /school/:schoolId route. The access
 // code is checked once here (same code as before — nothing changes for
@@ -65,6 +66,7 @@ export default function SchoolHomePage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
+      <SiteHeader title={school?.name || "School tools"} />
       <header className="bg-emerald-800 text-white py-4 px-4 sm:px-6 shadow flex items-center justify-between gap-3">
         <div>
           <h1 className="text-base sm:text-lg font-semibold">

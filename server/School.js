@@ -15,8 +15,10 @@ const schoolSchema = new mongoose.Schema(
     // Legacy diary/admin credentials remain for backwards compatibility with
     // the original /school/:id pages. New login uses the hashed fields below.
     diaryCode: { type: String, required: true, trim: true },
-    adminPassword: { type: String, required: true, trim: true },
-     adminUserId: { type: String, default: "", trim: true, lowercase: true },
+    // Keep this empty for new accounts; adminPasswordHash is authoritative.
+    // The old value is read only as a migration fallback for existing schools.
+    adminPassword: { type: String, default: "", trim: true },
+    adminUserId: { type: String, default: "", trim: true, lowercase: true },
     adminPasswordHash: { type: String, default: "" },
     teacherPasswordHash: { type: String, default: "" },
     studentPasswordHash: { type: String, default: "" },
