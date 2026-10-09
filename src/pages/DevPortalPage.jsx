@@ -13,7 +13,10 @@ const emptyForm = {
   address: "",
   phone: "",
   diaryCode: "",
+  adminUserId: "",
   adminPassword: "",
+  teacherPassword: "",
+  studentPassword: "",
   leftLogo: "",
   rightLogo: "",
 };
@@ -103,7 +106,10 @@ export default function DevPortalPage() {
       address: s.address || "",
       phone: s.phone || "",
       diaryCode: s.diaryCode,
+      adminUserId: s.adminUserId || "",
       adminPassword: s.adminPassword,
+      teacherPassword: "",
+      studentPassword: "",
       leftLogo: s.leftLogo || "",
       rightLogo: s.rightLogo || "",
     });
@@ -153,7 +159,7 @@ export default function DevPortalPage() {
     return (
       <AccessGate
         title="Dev Portal"
-        subtitle="Manage every school's diary code and admin password."
+        subtitle="Create schools and their first admin login. Normal users never see this setup portal."
         onVerify={async (password) => {
           // devListSchools itself checks the password server-side (via the
           // x-dev-password header) — a successful response IS the proof
@@ -176,7 +182,7 @@ export default function DevPortalPage() {
       <header className="bg-slate-900 text-white py-4 px-4 sm:px-6 shadow">
         <h1 className="text-base sm:text-lg font-semibold">Dev Portal — All Schools</h1>
         <p className="text-xs sm:text-sm text-slate-300">
-          Add schools, and set or change each one's diary code and admin password.
+          Add schools, create the first admin account, and set the shared teacher/student passwords.
         </p>
       </header>
 
@@ -214,16 +220,34 @@ export default function DevPortalPage() {
               full
             />
             <Field
-              label="Diary access code"
+              label="Diary access code (legacy generator)"
               value={form.diaryCode}
               onChange={(v) => setForm((f) => ({ ...f, diaryCode: v }))}
               placeholder="e.g. 135135"
             />
             <Field
-              label="Admin portal password"
+              label="Admin login ID"
+              value={form.adminUserId}
+              onChange={(v) => setForm((f) => ({ ...f, adminUserId: v }))}
+              placeholder="Auto-generated if blank"
+            />
+            <Field
+              label="Admin password"
               value={form.adminPassword}
               onChange={(v) => setForm((f) => ({ ...f, adminPassword: v }))}
               placeholder="e.g. Mutahhar@135"
+            />
+            <Field
+              label="Shared teacher password"
+              value={form.teacherPassword}
+              onChange={(v) => setForm((f) => ({ ...f, teacherPassword: v }))}
+              placeholder={editingId ? "Leave blank to keep current" : "Default: teacher123"}
+            />
+            <Field
+              label="Shared student password"
+              value={form.studentPassword}
+              onChange={(v) => setForm((f) => ({ ...f, studentPassword: v }))}
+              placeholder={editingId ? "Leave blank to keep current" : "Default: student123"}
             />
           </div>
 
@@ -293,8 +317,9 @@ export default function DevPortalPage() {
                     <p className="text-xs text-slate-400 mt-1">
                       {revealedId === s.id ? (
                         <>
-                          Code: <span className="font-mono">{s.diaryCode}</span> · Admin
-                          password: <span className="font-mono">{s.adminPassword}</span>
+                          Login ID: <span className="font-mono">{s.adminUserId}</span> · Code: <span className="font-mono">{s.diaryCode}</span> · Admin
+                          password: <span className="font-mono">{s.adminPassword}</span><br />
+                          Teacher password: {s.teacherPasswordConfigured ? "configured" : "not configured"} · Student password: {s.studentPasswordConfigured ? "configured" : "not configured"}
                         </>
                       ) : (
                         <button
