@@ -1,4 +1,4 @@
-# School Homework Diary Generator
+
 
 A small React + Tailwind app. The teacher fills in the class/date details and
 adds one row per subject (subject name + homework text), clicks
