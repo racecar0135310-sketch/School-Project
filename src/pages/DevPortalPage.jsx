@@ -429,4 +429,4 @@ function LogoField({ label, value, onUpload, onRemove }) {
       </div>
     </div>
   );
-} Purchase network physical take up cap, doesn't all set physician to phrase a new screen, us in a
+}
