@@ -7,6 +7,8 @@ export const NAV_BY_ROLE = {
     ["overview", "Overview", "⌂"],
     ["teachers", "Teachers", "♙"],
     ["students", "Students", "♧"],
+    ["attendance", "Attendance review", "✓"],
+    ["staff-attendance", "Teacher attendance", "◷"],
     ["classes", "Classes & subjects", "▦"],
     ["timetable", "Timetable", "◷"],
     ["calendar", "Calendar", "▣"],
@@ -30,6 +32,7 @@ export const NAV_BY_ROLE = {
   student: [
     ["overview", "My dashboard", "⌂"],
     ["diary", "Diary & homework", "⌁"],
+    ["attendance", "My attendance", "✓"],
     ["tests", "Tests", "▣"],
     ["results", "Results", "▤"],
     ["timetable", "Timetable & calendar", "◷"],

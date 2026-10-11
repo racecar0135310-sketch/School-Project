@@ -9,7 +9,7 @@ export default function StudentDashboard({ view, session }) {
   if (loading) return <LoadingState />;
   if (error) return <Notice>{error}</Notice>;
   const student = data.student || session.user;
-  return <div>{view === "overview" && <StudentOverview data={data} student={student} />}{view === "diary" && <StudentDiary data={data} />}{view === "tests" && <StudentTests data={data} />}{view === "results" && <StudentResults data={data} />}{(view === "timetable" || view === "fees") && <StudentExtras view={view} data={data} />}</div>;
+  return <div>{view === "overview" && <StudentOverview data={data} student={student} />}{view === "diary" && <StudentDiary data={data} />}{view === "tests" && <StudentTests data={data} />}{view === "results" && <StudentResults data={data} />}{["attendance", "timetable", "fees"].includes(view) && <StudentExtras view={view} data={data} />}</div>;
 }
 
 function StudentOverview({ data, student }) {

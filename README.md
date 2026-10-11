@@ -1,56 +1,39 @@
 # SchoolFlow
 
-SchoolFlow is a React/Vite school portal backed by an Express API and MongoDB. It keeps the original school diary generator and its school-specific access pages while adding a central Admin, Teacher, and Student login.
+SchoolFlow is a React/Vite school portal backed by Express and MongoDB. The existing diary and test-paper generators remain available alongside the LMS.
 
-## Current implementation status
+## Current implemented modules
 
-The current release is a working foundation, not yet the complete school-management platform described in the project brief. It currently includes:
+- Role-based Admin, Teacher, and Student sign-in; general teacher/student IDs require choosing a profile, and specific IDs/email/phone can identify a personal account.
+- Admin: teacher/student records, suspend/reactivate, CSV student import, classes/sections/subjects/teacher assignments, timetable periods, academic calendar, exams, student fee invoices and manual payment ledger, daily attendance review/edit, teacher attendance review, summary reports/CSV export, audit history, school profile, grading/rule JSON settings.
+- Teacher: class dashboard, student attendance with configurable statuses, linked/ad-hoc grades, homework, resources, scheduled exams, assignment submissions/feedback, timetable/calendar, and staff check-in/out.
+- Student: homework and assignment submission, resources/tests, results, attendance history, class timetable/calendar/exams, and fee invoice/payment history.
+- Dev Portal: provision/delete schools, diary codes, admin and general role IDs, shared passwords, and school logos.
+- Server role checks, school scoping, salted password hashes, protected legacy Admin Portal mutations, rate limiting for login/Dev Portal, Helmet headers, and audit entries for several key changes.
 
-- Dev Portal school setup, diary access codes, admin login credentials, and school logos.
-- Central admin sign-in, school profile/theme settings, teacher/student directories, and shared role passwords.
-- Specific teacher/student IDs and general role IDs. General ID sign-in asks the user to select their profile, so personal records stay tied to an individual.
-- Teacher dashboard overview, daily attendance (present/absent/late), grade entry, homework, and learning/test resources.
-- Student dashboard overview, homework, test resources, grades, and attendance history.
-- Original diary and test-paper generators at the existing school routes and inside the teacher workspace.
-- Server-side role checks for the central APIs and signed access for legacy Admin Portal write operations.
+**Important limitations:** this is still not a full SIS/ERP. There is no OTP/2FA or password reset, parent portal, multi-campus, bulk teacher import, online payment gateway, fee structures/installment engine/fines/refunds/receipts, admissions/promotions/transfers, teacher leave approval/regularization, seating/admit cards/report cards/transcripts/GPA, file-manager storage service, automated backups, restore, PWA, localization/RTL, or broad end-to-end test suite. Uploads continue to use bounded inline data URIs (not a production object store). Some report/export options are summary-only. Read [docs/API_AND_ROLES.md](docs/API_AND_ROLES.md) for actual endpoints and authorization boundaries.
 
-Fees/payments, timetables, academic years/terms, exam scheduling/report cards, submissions, bulk imports, audit logs, OTP/2FA/password reset, exports, PWA, localization/RTL, and backup/restore are not implemented yet. The API is single-school oriented today; school IDs are retained in the data model for later multi-school support. See [docs/API_AND_ROLES.md](docs/API_AND_ROLES.md) for current API routes and the role boundary.
+## Requirements and local development
 
-## Requirements
+- Node.js 18+ and MongoDB.
+- At repository root run `npm install`.
+- Copy `server/env.example` to `server/.env`, set `MONGODB_URI`, and choose strong, private `DEV_PASSWORD` and `SESSION_SECRET` values. Do not commit `.env`.
+- Run `npm run dev:server` and `npm run dev` in separate terminals. Vite proxies `/api` to `http://localhost:4000`; configure `VITE_API_PROXY` for another local API address.
 
-- Node.js 18 or newer
-- A MongoDB database (local or Atlas)
+## Initial setup and optional demo seed
 
-## Local development
+Use `/dev` to create a school and administrator, then sign in at `/login`. Configure school-wide teacher/student passwords and general IDs under School settings, then create teacher/student profiles and classes.
 
-1. Install frontend dependencies from the repository root with `npm install`.
-2. Copy `server/env.example` to `server/.env` and set `MONGODB_URI` and a strong, private `DEV_PASSWORD`. Keep `.env` out of source control.
-3. In one terminal, start the API with `npm run dev:server`.
-4. In another terminal, start Vite with `npm run dev` and open the local URL it prints.
+An optional **explicitly configured** sample-school seed is available. Set `SEED_SCHOOL_NAME`, `SEED_DIARY_CODE`, `SEED_ADMIN_ID`, `SEED_ADMIN_PASSWORD`, `SEED_TEACHER_ID`, `SEED_TEACHER_PASSWORD`, `SEED_STUDENT_ID`, and `SEED_STUDENT_PASSWORD` in the server environment; optional values include `SEED_SCHOOL_ADDRESS`, `SEED_SCHOOL_PHONE`, `SEED_GENERAL_TEACHER_ID`, `SEED_GENERAL_STUDENT_ID`, `SEED_ACADEMIC_YEAR`, `SEED_TEACHER_NAME`, `SEED_STUDENT_NAME`, `SEED_CLASS`, and `SEED_SECTION`. Run `npm --prefix server run seed` once. The script refuses to overwrite when its admin ID already exists. It creates the school, admin, role password hashes, one teacher, one student, and one class. Never use real production credentials for a demo seed.
 
-Vite proxies `/api` to `http://localhost:4000` by default. Set `VITE_API_PROXY` if the API runs on a different local host/port.
+## Build, test, deploy
 
-## First-time setup
+- Frontend: `npm run build` produces `dist/`.
+- Backend tests: `npm --prefix server test` runs built-in Node tests. `npm --prefix server run check` runs the server syntax check.
+- API: `npm --prefix server start`.
 
-1. Open `/dev`, authenticate with the `DEV_PASSWORD`, and create the school plus its admin login ID/password.
-2. Sign in at `/login` as that admin.
-3. Open **School settings** to set the general teacher/student login IDs and shared passwords.
-4. Add teacher and student profiles from their respective admin sections. Their specific IDs work with the shared password for that role. General role IDs ask the person to choose their individual profile after authentication.
+Deploy the API with MongoDB connectivity and environment secrets. Deploy the Vite `dist/` directory; either proxy `/api` to Express on the same origin or set `VITE_API_URL` at frontend build time. Use HTTPS, restrict `CLIENT_ORIGIN` to trusted browser origins, configure backups/monitoring at the hosting/database provider, and never expose `DEV_PASSWORD` to the client build. The build may show a large bundle-size warning; it still completes successfully.
 
-There are no demo accounts or automatic seed records. Do not use a shared general role account where individual attribution is required; select a profile at login or use the specific ID.
+## Preserved legacy features
 
-## Build and deployment
-
-- Frontend production build: `npm run build` (output: `dist/`).
-- API syntax check: `npm --prefix server test`.
-- API start: `npm --prefix server start`.
-
-Deploy the Express API with `server/` dependencies and set `MONGODB_URI`, `DEV_PASSWORD`, and optionally `PORT`/`SESSION_SECRET`. Deploy the Vite `dist/` output on a static host. For a separate API origin, set `VITE_API_URL` at frontend build time; otherwise route `/api` to the Express service through the same origin/reverse proxy. Use HTTPS in production. The client build currently emits a large-chunk advisory; it does not prevent a successful build.
-
-## Original diary tools
-
-The legacy routes `/schools`, `/school/:schoolId`, and `/school/:schoolId/admin` remain available. The original diary generator still creates its printable diary image, and the test-paper generator remains available to teachers. Legacy diary data and LMS data share school records but use separate routes and their distinct access controls.
-
-## Verification
-
-Run `npm run build` and `npm --prefix server test`. The server test script currently performs a JavaScript syntax check only; automated API/database integration tests have not been added yet.
+The existing `/schools`, `/school/:schoolId`, and `/school/:schoolId/admin` routes, diary image generator, test-paper document generator, school codes, logos, and colors are retained. Legacy mutating admin requests now require a signed school-admin session; diary teacher-name lookups remain readable for the generator.

@@ -207,6 +207,8 @@ export async function addTeacherMaterial(payload) {
   return request("/api/teacher/materials", { method: "POST", body: JSON.stringify(payload) });
 }
 export async function getTeacherSchedule() { return request("/api/teacher/schedule"); }
+export async function teacherCheckIn() { return request("/api/teacher/check-in", { method: "POST", body: JSON.stringify({}) }); }
+export async function teacherCheckOut() { return request("/api/teacher/check-out", { method: "POST", body: JSON.stringify({}) }); }
 export async function createTeacherExam(payload) { return request("/api/teacher/exams", { method: "POST", body: JSON.stringify(payload) }); }
 export async function getTeacherAssignments() { return request("/api/teacher/assignments"); }
 export async function gradeTeacherSubmission(id, payload) { return request(`/api/teacher/submissions/${id}/grade`, { method: "PATCH", body: JSON.stringify(payload) }); }

@@ -17,6 +17,10 @@ const emptyForm = {
   diaryCode: "",
   adminUserId: "",
   adminPassword: "",
+  teacherLoginId: "",
+  studentLoginId: "",
+  teacherPassword: "",
+  studentPassword: "",
   leftLogo: "",
   rightLogo: "",
 };
@@ -108,6 +112,10 @@ export default function DevPortalPage() {
       diaryCode: s.diaryCode,
       adminUserId: s.adminUserId || "",
       adminPassword: "",
+      teacherLoginId: s.teacherLoginId || "",
+      studentLoginId: s.studentLoginId || "",
+      teacherPassword: "",
+      studentPassword: "",
       leftLogo: s.leftLogo || "",
       rightLogo: s.rightLogo || "",
     });
@@ -239,6 +247,30 @@ export default function DevPortalPage() {
               placeholder={editingId ? "Leave blank to keep the current password" : "Create a secure password"}
               required={!editingId}
             />
+            <Field
+              label="General teacher ID"
+              value={form.teacherLoginId}
+              onChange={(v) => setForm((f) => ({ ...f, teacherLoginId: v }))}
+              placeholder="e.g. all-teachers"
+            />
+            <Field
+              label="General student ID"
+              value={form.studentLoginId}
+              onChange={(v) => setForm((f) => ({ ...f, studentLoginId: v }))}
+              placeholder="e.g. all-students"
+            />
+            <Field
+              label="Teacher password (optional)"
+              value={form.teacherPassword}
+              onChange={(v) => setForm((f) => ({ ...f, teacherPassword: v }))}
+              placeholder="Leave blank to keep current password"
+            />
+            <Field
+              label="Student password (optional)"
+              value={form.studentPassword}
+              onChange={(v) => setForm((f) => ({ ...f, studentPassword: v }))}
+              placeholder="Leave blank to keep current password"
+            />
           </div>
           <p className="text-xs text-slate-500">The admin uses this ID and password at <a href="/login" className="font-semibold text-blue-700 hover:underline">Sign in</a>. The same password also remains valid for the legacy school admin page.</p>
 
@@ -306,6 +338,8 @@ export default function DevPortalPage() {
                     <p className="text-xs text-slate-500">{s.address}</p>
                     <p className="text-xs text-slate-500">{s.phone}</p>
                     <p className="text-xs text-slate-500 mt-1">Admin login ID: <span className="font-mono font-semibold">{s.adminUserId || "Not set — edit this school"}</span></p>
+                    <p className="text-xs text-slate-500">General teacher ID: <span className="font-mono">{s.teacherLoginId || "Not set"}</span> · General student ID: <span className="font-mono">{s.studentLoginId || "Not set"}</span></p>
+                    <p className="text-xs text-slate-500">Teacher password: {s.hasTeacherPassword ? "configured" : "not set"} · Student password: {s.hasStudentPassword ? "configured" : "not set"}</p>
                     <p className="text-xs text-slate-400 mt-1">
                       {revealedId === s.id ? (
                         <>

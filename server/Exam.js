@@ -15,6 +15,11 @@ const examSchema = new mongoose.Schema({
   instructions: { type: String, default: "", trim: true },
   status: { type: String, enum: ["scheduled", "completed", "cancelled"], default: "scheduled" },
   createdByTeacherId: { type: mongoose.Schema.Types.ObjectId, ref: "Teacher", default: null },
+  attendance: [{
+    _id: false,
+    studentId: { type: mongoose.Schema.Types.ObjectId, ref: "Student", required: true },
+    status: { type: String, enum: ["present", "absent", "late"], default: "present" },
+  }],
 }, { timestamps: true });
 
 examSchema.index({ schoolId: 1, className: 1, section: 1, date: 1 });

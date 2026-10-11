@@ -5,6 +5,7 @@ const gradeSchema = new mongoose.Schema(
     schoolId: { type: mongoose.Schema.Types.ObjectId, ref: "School", required: true, index: true },
     teacherId: { type: mongoose.Schema.Types.ObjectId, ref: "Teacher", required: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: "Student", required: true },
+    examId: { type: mongoose.Schema.Types.ObjectId, ref: "Exam", default: null },
     subject: { type: String, required: true, trim: true },
     assessment: { type: String, required: true, trim: true },
     marks: { type: Number, required: true, min: 0 },

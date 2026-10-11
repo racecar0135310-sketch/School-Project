@@ -33,6 +33,8 @@ Requires a signed session; returns the current user identity and school profile.
 
 The role-wide general ID is an authentication alias, not an anonymous shared profile: the login flow requires choosing a teacher/student profile before issuing a session. Specific IDs remain available for direct sign-in.
 
+The current admin has additional class setup, timetable/calendar/exam administration, manual fee invoices/payments, student CSV import, account suspension, attendance review, summary reporting, school settings, and audit access. The payment and report features are basic, not full finance or analytics modules.
+
 ## Central admin routes
 
 All require an admin session and are scoped to its school.
@@ -43,6 +45,16 @@ All require an admin session and are scoped to its school.
 - `GET|POST /api/admin/students`
 - `PUT|DELETE /api/admin/students/:id`
 - `PUT /api/admin/settings` — school name/address/phone/theme, general teacher/student IDs, and optional shared passwords. Existing password hashes are retained when password fields are blank.
+- `GET|POST /api/admin/classes`, `PUT|DELETE /api/admin/classes/:id` — classes, sections, subjects, teacher assignment, active flag.
+- `GET|POST /api/admin/timetable`, `PUT|DELETE /api/admin/timetable/:id` — weekly period records.
+- `GET|POST /api/admin/calendar`, `PUT|DELETE /api/admin/calendar/:id` — academic/exam/holiday/event dates.
+- `GET|POST /api/admin/exams`, `PUT|DELETE /api/admin/exams/:id`, `PUT /api/admin/exams/:id/attendance`.
+- `GET /api/admin/attendance?date=YYYY-MM-DD`, `PATCH /api/admin/attendance/:registerId` — edit a student's daily attendance by passing `studentId` and `status` in the body.
+- `GET /api/admin/teacher-attendance?date=YYYY-MM-DD`.
+- `GET|POST /api/admin/fees`, `POST /api/admin/fees/:id/payments` — fee invoices and manual payment entries only.
+- `PATCH /api/admin/teachers/:id/active`, `PATCH /api/admin/students/:id/active`.
+- `POST /api/admin/import/students` — `{ csv }` or `{ records }`; insert-only.
+- `GET /api/admin/reports/summary`, `GET /api/admin/audit?limit=100`.
 
 Teacher/student deletes also clean related records in the currently implemented modules. Dev Portal school deletion removes that school's current teacher, student, attendance, grade, homework, and material documents.
 
@@ -56,10 +68,13 @@ All require a teacher session with a selected teacher profile; records are const
 - `POST /api/teacher/grades` — student, subject, assessment, marks/maxMarks, optional term/feedback.
 - `POST /api/teacher/homework` — subject/title plus optional description, due date, link, or attached data.
 - `POST /api/teacher/materials` — subject/title plus optional description, link/file and `kind` (`material` or `test`).
+- `GET /api/teacher/schedule`, `POST /api/teacher/exams`, `GET /api/teacher/assignments`, `PATCH /api/teacher/submissions/:id/grade`.
+- `GET /api/teacher/my-attendance`, `POST /api/teacher/check-in`, `POST /api/teacher/check-out`.
 
 ## Student routes
 
 - `GET /api/student/overview` — requires a student session with a selected student profile; returns matching class homework/resources, the student's grades, and attendance history.
+- `POST /api/student/assignments/:homeworkId/submissions` — text or bounded inline attachment; one resubmittable record per homework/student.
 
 ## Legacy diary and Admin Portal compatibility
 
@@ -70,4 +85,4 @@ All require a teacher session with a selected teacher profile; records are const
 
 ## Explicitly not exposed yet
 
-There are no current APIs for timetables, calendars/holidays, academic sessions/terms, exams/exam schedules/report cards, assignment submissions, fees/invoices/payments, file manager metadata, audit logs, bulk import/export, user suspension, password reset/OTP/2FA, reports, or backup/restore. Those require dedicated schemas, API authorization rules, UI, migrations, and tests before they can be considered implemented.
+Still not implemented: academic-year/term/holiday management beyond a school-year label and calendar dates; report cards/transcripts/GPA; fee structures/installments/refunds/receipts/online payment gateway; production file/object storage; bulk teacher imports; OTP/2FA/password reset; admissions/promotions/transfers; teacher leave requests/approvals; custom analytics; backup/restore; PWA; localization/RTL; and multi-campus operation. Inline data-URI attachments are not production file storage. Reporting is summary-only and CSV export covers that summary. Audit coverage is partial, not a complete immutable compliance log. Database integration tests remain necessary.
