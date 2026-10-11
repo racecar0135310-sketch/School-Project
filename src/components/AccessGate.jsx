@@ -25,7 +25,7 @@ export default function AccessGate({
     try {
       const ok = onVerify ? await onVerify(value) : value === expected;
       if (ok) {
-        onSuccess(value);
+        onSuccess(value, ok);
       } else {
         setError("That's not correct — please try again.");
       }

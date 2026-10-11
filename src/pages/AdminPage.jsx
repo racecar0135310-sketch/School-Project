@@ -18,11 +18,10 @@ const emptyForm = { inchargeName: "", className: "", section: "", subjectsText: 
 
 export default function AdminPage() {
   const { schoolId } = useParams();
-  const sessionKey = `admin-access-granted-${schoolId}`;
+  const sessionKey = `legacy-admin-token-${schoolId}`;
 
-  const [unlocked, setUnlocked] = useState(
-    () => sessionStorage.getItem(sessionKey) === "true"
-  );
+  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(sessionKey) || "");
+  const [unlocked, setUnlocked] = useState(() => Boolean(sessionStorage.getItem(sessionKey)));
   const [school, setSchool] = useState(null);
   const [schoolError, setSchoolError] = useState(false);
   const [teachers, setTeachers] = useState([]);
@@ -55,7 +54,7 @@ export default function AdminPage() {
     setColors(next);
     setSavingColors(true);
     try {
-      await updateSchoolColors(schoolId, next);
+      await updateSchoolColors(schoolId, next, adminToken);
     } catch (err) {
       setError("Couldn't save the color change — please try again.");
     } finally {
@@ -107,9 +106,9 @@ export default function AdminPage() {
     setError("");
     try {
       if (editingId) {
-        await updateTeacher(editingId, payload);
+        await updateTeacher(editingId, payload, adminToken);
       } else {
-        await createTeacher(schoolId, payload);
+        await createTeacher(schoolId, payload, adminToken);
       }
       await refresh();
       resetForm();
@@ -133,7 +132,7 @@ export default function AdminPage() {
   const handleDelete = async (id) => {
     setError("");
     try {
-      await deleteTeacher(id);
+      await deleteTeacher(id, adminToken);
       if (editingId === id) resetForm();
       await refresh();
     } catch (err) {
@@ -162,10 +161,14 @@ export default function AdminPage() {
       <AccessGate
         title={school ? `${school.name} — Admin` : "Admin Portal"}
         subtitle="Enter the admin password to continue."
-        onVerify={(password) => verifyAdminPassword(schoolId, password)}
+        onVerify={async (password) => {
+          const result = await verifyAdminPassword(schoolId, password);
+          return result.ok ? result : false;
+        }}
         placeholder="Enter password"
-        onSuccess={() => {
-          sessionStorage.setItem(sessionKey, "true");
+        onSuccess={(_password, result) => {
+          sessionStorage.setItem(sessionKey, result.token);
+          setAdminToken(result.token);
           setUnlocked(true);
         }}
       />

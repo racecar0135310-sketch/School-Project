@@ -9,6 +9,9 @@ export default function LoginPage() {
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [profileChoices, setProfileChoices] = useState(null);
+  const [profileId, setProfileId] = useState("");
+  const [profileRole, setProfileRole] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -25,7 +28,13 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const session = await login(userId.trim(), password);
+      const session = await login(userId.trim(), password, profileId || undefined);
+      if (session.requiresProfileSelection) {
+        setProfileChoices(session.profiles || []);
+        setProfileRole(session.role);
+        setProfileId(session.profiles?.[0]?.id || "");
+        return;
+      }
       saveSession(session);
       const destination = location.state?.from || "/app";
       navigate(destination, { replace: true });
@@ -50,9 +59,10 @@ export default function LoginPage() {
           <div className="mb-8"><p className="text-sm text-cyan-300 font-semibold">Secure sign in</p><h2 className="mt-2 text-3xl font-black tracking-tight">Access your workspace</h2><p className="mt-2 text-sm text-slate-400">Use the ID provided by your school administrator.</p></div>
           {error && <div role="alert" className="mb-5 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</div>}
           <form onSubmit={handleSubmit} className="space-y-5">
-            <label className="block"><span className="text-xs font-semibold text-slate-300">User ID</span><input autoFocus value={userId} onChange={(e) => { setUserId(e.target.value); setError(""); }} placeholder="e.g. ayesha-khan" autoComplete="username" className="mt-2 w-full rounded-xl border border-white/15 bg-white/[.07] px-4 py-3.5 text-sm text-white placeholder:text-slate-500 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20" /></label>
-            <label className="block"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-300">Password</span><span className="text-[11px] text-slate-500">Shared by your school role</span></div><div className="relative mt-2"><input type={showPassword ? "text" : "password"} value={password} onChange={(e) => { setPassword(e.target.value); setError(""); }} placeholder="Enter your password" autoComplete="current-password" className="w-full rounded-xl border border-white/15 bg-white/[.07] px-4 py-3.5 pr-20 text-sm text-white placeholder:text-slate-500 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-cyan-300 hover:text-cyan-100">{showPassword ? "Hide" : "Show"}</button></div></label>
-            <button type="submit" disabled={loading} className="w-full rounded-xl bg-cyan-300 py-3.5 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/20 hover:bg-cyan-200 disabled:opacity-60 transition">{loading ? "Checking your account…" : "Sign in"}</button>
+            <label className="block"><span className="text-xs font-semibold text-slate-300">User ID</span><input autoFocus value={userId} onChange={(e) => { setUserId(e.target.value); setError(""); setProfileChoices(null); setProfileId(""); }} placeholder="e.g. ayesha-khan" autoComplete="username" className="mt-2 w-full rounded-xl border border-white/15 bg-white/[.07] px-4 py-3.5 text-sm text-white placeholder:text-slate-500 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20" /></label>
+            <label className="block"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-300">Password</span><span className="text-[11px] text-slate-500">Shared by your school role</span></div><div className="relative mt-2"><input type={showPassword ? "text" : "password"} value={password} onChange={(e) => { setPassword(e.target.value); setError(""); setProfileChoices(null); setProfileId(""); }} placeholder="Enter your password" autoComplete="current-password" className="w-full rounded-xl border border-white/15 bg-white/[.07] px-4 py-3.5 pr-20 text-sm text-white placeholder:text-slate-500 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-cyan-300 hover:text-cyan-100">{showPassword ? "Hide" : "Show"}</button></div></label>
+            {profileChoices && <label className="block"><span className="text-xs font-semibold text-slate-300">Choose your {profileRole} profile</span><select value={profileId} onChange={(event) => setProfileId(event.target.value)} className="mt-2 w-full rounded-xl border border-white/15 bg-slate-900 px-4 py-3.5 text-sm text-white outline-none focus:border-cyan-300"><option value="">{profileChoices.length ? "Select a profile" : "No profiles are set up yet"}</option>{profileChoices.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}{profile.className ? ` · ${profile.className}` : ""}{profile.section ? ` · ${profile.section}` : ""}{profile.rollNumber ? ` · Roll ${profile.rollNumber}` : ""}</option>)}</select><span className="mt-1 block text-[11px] text-slate-400">This general ID is shared; select your own profile to open the correct records.</span></label>}
+            <button type="submit" disabled={loading || (profileChoices !== null && !profileId)} className="w-full rounded-xl bg-cyan-300 py-3.5 text-sm font-bold text-slate-950 shadow-lg shadow-cyan-500/20 hover:bg-cyan-200 disabled:opacity-60 transition">{loading ? "Checking your account…" : profileChoices ? "Continue to profile" : "Sign in"}</button>
           </form>
           <div className="mt-8 border-t border-white/10 pt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500"><div className="flex gap-4"><Link to="/" className="hover:text-white">← Home</Link><Link to="/schools" className="hover:text-white">School diary</Link></div><span>Role is detected automatically</span></div>
           <div className="mt-10 grid grid-cols-3 gap-2">{Object.entries(ROLE_META).map(([role, meta]) => <div key={role} className="rounded-xl border border-white/10 bg-white/[.04] p-3"><span className={`inline-block w-2 h-2 rounded-full ${role === "admin" ? "bg-blue-400" : role === "teacher" ? "bg-emerald-400" : "bg-orange-400"}`} /><p className="mt-2 text-xs font-semibold text-slate-300">{meta.label}</p></div>)}</div>

@@ -24,10 +24,10 @@ export async function request(path, options = {}) {
 // ---------------------------------------------------------------------
 // Central login / session
 // ---------------------------------------------------------------------
-export async function login(userId, password) {
+export async function login(userId, password, profileId) {
   return request("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ userId, password }),
+    body: JSON.stringify({ userId, password, ...(profileId ? { profileId } : {}) }),
   });
 }
 
@@ -55,16 +55,16 @@ export async function verifyDiaryCode(schoolId, code) {
 }
 
 export async function verifyAdminPassword(schoolId, password) {
-  const { ok } = await request(`/api/schools/${schoolId}/verify-admin`, {
+  return request(`/api/schools/${schoolId}/verify-admin`, {
     method: "POST",
     body: JSON.stringify({ password }),
   });
-  return ok;
 }
 
-export async function updateSchoolColors(schoolId, colors) {
+export async function updateSchoolColors(schoolId, colors, adminToken) {
   return request(`/api/schools/${schoolId}/colors`, {
     method: "PUT",
+    headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {},
     body: JSON.stringify({ colors }),
   });
 }
@@ -78,24 +78,26 @@ export async function loadTeachers(schoolId) {
 
 }
 
-export async function createTeacher(schoolId, teacher) {
+export async function createTeacher(schoolId, teacher, adminToken) {
   const created = await request("/api/teachers", {
     method: "POST",
+    headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {},
     body: JSON.stringify({ ...teacher, schoolId }),
   });
   return { ...created, id: created.id || created._id };
 }
 
-export async function updateTeacher(id, teacher) {
+export async function updateTeacher(id, teacher, adminToken) {
   const updated = await request(`/api/teachers/${id}`, {
     method: "PUT",
+    headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {},
     body: JSON.stringify(teacher),
   });
   return { ...updated, id: updated._id };
 }
 
-export async function deleteTeacher(id) {
-  await request(`/api/teachers/${id}`, { method: "DELETE" });
+export async function deleteTeacher(id, adminToken) {
+  await request(`/api/teachers/${id}`, { method: "DELETE", headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {} });
 }
 
 export function findTeacherByName(teachers, name) {
