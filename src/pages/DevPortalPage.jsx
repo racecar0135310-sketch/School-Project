@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AccessGate from "../components/AccessGate.jsx";
 import SiteHeader from "../components/SiteHeader.jsx";
+import { useDialog, useToast } from "../components/UIProvider.jsx";
 import {
   devListSchools,
   devCreateSchool,
@@ -9,7 +10,6 @@ import {
   devDeleteSchool,
 } from "../lib/storage.js";
 
-const DEV_SESSION_KEY = "dev-access-password";
 const emptyForm = {
   name: "",
   address: "",
@@ -41,11 +41,13 @@ function fileToDataUrl(file) {
 }
 
 export default function DevPortalPage() {
+  const { confirm } = useDialog();
+  const toast = useToast();
   // The dev password itself is kept only in sessionStorage on this device —
   // it's never hardcoded in the source. Every dev API call sends it fresh
   // and the server checks it against the DEV_PASSWORD environment variable.
   const [devPassword, setDevPassword] = useState(
-    () => sessionStorage.getItem(DEV_SESSION_KEY) || ""
+    () => ""
   );
   const [schools, setSchools] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -144,11 +146,8 @@ export default function DevPortalPage() {
   };
 
   const handleDelete = async (id) => {
-    if (
-      !window.confirm(
-        "Delete this school and all of its saved incharges? This can't be undone."
-      )
-    ) {
+    const school = schools.find((item) => item.id === id);
+    if (!await confirm({ title: "Delete school permanently?", message: `Delete ${school?.name || "this school"} and all saved school data? This cannot be undone.`, danger: true, confirmText: "Delete school" })) {
       return;
     }
     setError("");
@@ -176,7 +175,6 @@ export default function DevPortalPage() {
         }}
         placeholder="Enter dev password"
         onSuccess={(password) => {
-          sessionStorage.setItem(DEV_SESSION_KEY, password);
           setDevPassword(password);
         }}
       />

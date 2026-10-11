@@ -8,7 +8,6 @@ import {
   partStatement,
   grandTotalMarks,
 } from "../lib/testPaperLogic.js";
-import { downloadTestPaperDocx } from "../lib/testPaperDocx.js";
 
 // Same fallback logos the diary uses when a school hasn't uploaded its own —
 // keeps the test paper's header consistent with the diary everywhere.
@@ -188,6 +187,7 @@ export default function TestPaperGenerator({ school }) {
   const handleDone = async () => {
     setGenerating(true);
     try {
+      const { downloadTestPaperDocx } = await import("../lib/testPaperDocx.js");
       await downloadTestPaperDocx({ school, lang, meta, parts, style });
     } finally {
       setGenerating(false);

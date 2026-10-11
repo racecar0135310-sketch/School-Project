@@ -5,20 +5,45 @@ import { getAuthToken } from "./auth.js";
 // hosted on a separate origin.
 const API_URL = import.meta.env.VITE_API_URL || "";
 
+export function normalizeId(value) {
+  if (Array.isArray(value)) return value.map(normalizeId);
+  if (!value || typeof value !== "object") return value;
+  const normalized = Object.fromEntries(Object.entries(value).map(([key, child]) => [key, normalizeId(child)]));
+  if (normalized._id && !normalized.id) normalized.id = String(normalized._id);
+  return normalized;
+}
+
 export async function request(path, options = {}) {
   const { headers, ...rest } = options;
   const token = getAuthToken();
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    ...rest,
-  });
-   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
-  return body;
+  const method = String(rest.method || "GET").toUpperCase();
+  const attempts = method === "GET" ? 3 : 1;
+  let lastError;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const res = await fetch(`${API_URL}${path}`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...headers,
+        },
+        ...rest,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = typeof body.error === "string" ? body.error : body.error?.message;
+        throw new Error(message || `Request failed (${res.status})`);
+      }
+      return normalizeId(body?.ok === true && Object.hasOwn(body, "data") ? body.data : body);
+    } catch (err) {
+      lastError = err;
+      if (attempt + 1 >= attempts || err instanceof Error && /^Request failed \(/.test(err.message)) break;
+      await new Promise((resolve) => window.setTimeout(resolve, 250 * (2 ** attempt)));
+    }
+  }
+
+  throw lastError;
 }
 
 // ---------------------------------------------------------------------
@@ -73,9 +98,7 @@ export async function updateSchoolColors(schoolId, colors, adminToken) {
 // Original teacher routes — used by the existing Diary Generator.
 // ---------------------------------------------------------------------
 export async function loadTeachers(schoolId) {
-    const teachers = await request(`/api/teachers?schoolId=${encodeURIComponent(schoolId)}`);
-  return teachers.map((t) => ({ ...t, id: t.id || t._id }));
-
+  return request(`/api/teachers?schoolId=${encodeURIComponent(schoolId)}`);
 }
 
 export async function createTeacher(schoolId, teacher, adminToken) {
@@ -118,9 +141,7 @@ export async function verifyDevPassword(password) {
 }
 
 export async function devListSchools(devPassword) {
-    const schools = await request("/api/dev/schools", { headers: { "x-dev-password": devPassword } });
-  return schools.map((s) => ({ ...s, id: s.id || s._id }));
-
+  return request("/api/dev/schools", { headers: { "x-dev-password": devPassword } });
 }
 
 export async function devCreateSchool(devPassword, school) {
@@ -146,6 +167,16 @@ export async function devDeleteSchool(devPassword, id) {
     method: "DELETE",
     headers: { "x-dev-password": devPassword },
   });
+}
+export async function devGetFeatures(devPassword) {
+  return request("/api/dev/features", { headers: { "x-dev-password": devPassword } });
+}
+export async function devSetFeatures(devPassword, flags, schoolId) {
+  const path = schoolId ? `/api/dev/schools/${schoolId}/features` : "/api/dev/features";
+  return request(path, { method: "PATCH", headers: { "x-dev-password": devPassword }, body: JSON.stringify({ flags }) });
+}
+export async function devSetSchoolStatus(devPassword, schoolId, status, internalNotes) {
+  return request(`/api/dev/schools/${schoolId}/status`, { method: "PATCH", headers: { "x-dev-password": devPassword }, body: JSON.stringify({ status, internalNotes }) });
 }
 
 // ---------------------------------------------------------------------
@@ -207,8 +238,8 @@ export async function addTeacherMaterial(payload) {
   return request("/api/teacher/materials", { method: "POST", body: JSON.stringify(payload) });
 }
 export async function getTeacherSchedule() { return request("/api/teacher/schedule"); }
-export async function teacherCheckIn() { return request("/api/teacher/check-in", { method: "POST", body: JSON.stringify({}) }); }
-export async function teacherCheckOut() { return request("/api/teacher/check-out", { method: "POST", body: JSON.stringify({}) }); }
+export async function teacherCheckIn() { return request("/api/teacher/check-in", { method: "POST", body: JSON.stringify({ clientTime: new Date().toISOString() }) }); }
+export async function teacherCheckOut() { return request("/api/teacher/check-out", { method: "POST", body: JSON.stringify({ clientTime: new Date().toISOString() }) }); }
 export async function createTeacherExam(payload) { return request("/api/teacher/exams", { method: "POST", body: JSON.stringify(payload) }); }
 export async function getTeacherAssignments() { return request("/api/teacher/assignments"); }
 export async function gradeTeacherSubmission(id, payload) { return request(`/api/teacher/submissions/${id}/grade`, { method: "PATCH", body: JSON.stringify(payload) }); }

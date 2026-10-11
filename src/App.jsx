@@ -8,6 +8,7 @@ import SchoolHomePage from "./pages/SchoolHomePage.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
 import DevPortalPage from "./pages/DevPortalPage.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import NotFoundPage from "./pages/NotFoundPage.jsx";
 export default function App() {
   return (
     <BrowserRouter>
@@ -16,7 +17,7 @@ export default function App() {
        {/* New central LMS entry points */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/app" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+        <Route path="/app" element={<ProtectedRoute allow={["admin", "teacher", "student"]}><DashboardPage /></ProtectedRoute>} />
 
         {/* Original generator routes remain available for existing schools. */}
         <Route path="/schools" element={<SchoolSelectPage />} />
@@ -24,7 +25,7 @@ export default function App() {
         <Route path="/school/:schoolId/admin" element={<AdminPage />} />
         <Route path="/dev" element={<DevPortalPage />} />
           {/* Hidden, developer-only setup portal. */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   );

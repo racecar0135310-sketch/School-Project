@@ -21,6 +21,7 @@ import FeeInvoice from "./FeeInvoice.js";
 import AssignmentSubmission from "./AssignmentSubmission.js";
 import AuditLog from "./AuditLog.js";
 import TeacherAttendance from "./TeacherAttendance.js";
+import FeatureFlag from "./FeatureFlag.js";
 import { parseCsv } from "./csv.js";
 
 const app = express();
@@ -76,6 +77,7 @@ mongoose
       await AssignmentSubmission.syncIndexes();
       await AuditLog.syncIndexes();
       await TeacherAttendance.syncIndexes();
+      await FeatureFlag.syncIndexes();
       console.log("Indexes synced");
     } catch (err) {
       console.error("Failed to sync indexes:", err);
@@ -88,6 +90,14 @@ mongoose
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/api/features", requireAuth, async (req, res) => {
+  try {
+    const school = await School.findById(req.session.schoolId).select("status");
+    if (!school || ["suspended", "archived"].includes(school.status)) return res.status(403).json({ error: "This school account is unavailable." });
+    res.json({ flags: await getEffectiveFeatures(req.session.schoolId), maintenance: (await FeatureFlag.findOne({ scope: "global", schoolId: null }).select("flags").lean())?.flags?.maintenance === true });
+  } catch { res.status(500).json({ error: "Unable to load service features." }); }
 });
 
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many sign-in attempts. Please wait 15 minutes and try again." } });
@@ -191,6 +201,32 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+const FEATURE_DEFAULTS = {
+  diary: true, testPaper: true, attendance: true, gradebook: true,
+  homework: true, materials: true, exams: true, fees: true,
+  reports: true, import: true, timetable: true, calendar: true,
+};
+
+async function getEffectiveFeatures(schoolId) {
+  const [globalRecord, schoolRecord] = await Promise.all([
+    FeatureFlag.findOne({ scope: "global", schoolId: null }).lean(),
+    FeatureFlag.findOne({ scope: "school", schoolId }).lean(),
+  ]);
+  const globalFlags = { ...FEATURE_DEFAULTS, ...(globalRecord?.flags || {}) };
+  const schoolFlags = schoolRecord?.flags || {};
+  return Object.fromEntries(Object.keys(FEATURE_DEFAULTS).map((key) => [key, globalFlags[key] !== false && schoolFlags[key] !== false]));
+}
+
+function requireFeature(flag) {
+  return async (req, res, next) => {
+    try {
+      const flags = await getEffectiveFeatures(req.session.schoolId);
+      if (flags[flag] === false) return res.status(403).json({ error: "Service temporarily disabled by administrator.", code: "FEATURE_DISABLED", feature: flag });
+      next();
+    } catch (err) { next(err); }
+  };
+}
+
 function requireTeacher(req, res, next) {
   if (req.session?.role !== "teacher") {
     return res.status(403).json({ error: "Teacher access is required." });
@@ -247,6 +283,12 @@ async function getTeacherProfile(req) {
 
 function publicRecord(document) {
   return { ...document.toObject(), id: String(document._id) };
+}
+
+function dateInTimezone(date, timezone = "UTC") {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 async function writeAudit(req, action, entity = "", entityId = "", details = {}) {
@@ -356,6 +398,7 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
 
     const school = account.school || await School.findById(account.schoolId);
     if (!school) return res.status(401).json({ error: "This school's account is unavailable." });
+    if (school.status === "suspended" || school.status === "archived") return res.status(403).json({ error: "This school account is temporarily unavailable. Please contact your school administrator." });
     const passwordHash = account.role === "admin"
       ? school.adminPasswordHash
       : account.role === "teacher" ? school.teacherPasswordHash : school.studentPasswordHash;
@@ -406,6 +449,7 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
       ...(account.general ? { generalLogin: true } : {}),
       ...(account.role === "teacher" && account.profile ? { teacherId: String(account.profile._id) } : {}),
       ...(account.role === "student" && account.profile ? { studentId: String(account.profile._id) } : {}),
+      features: await getEffectiveFeatures(school._id),
     };
     await AuditLog.create({ schoolId: school._id, actorId: userId, actorName: user.name, role: user.role, action: "auth.login.success", entity: "session", ip: req.ip, details: { generalLogin: Boolean(account.general) } });
     res.json({
@@ -429,6 +473,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
   try {
     const school = await School.findById(req.session.schoolId);
     if (!school) return res.status(401).json({ error: "This school account no longer exists." });
+    if (school.status === "suspended" || school.status === "archived") return res.status(403).json({ error: "This school account is temporarily unavailable." });
     let name = school.name;
     if (req.session.role === "teacher" && req.session.teacherId) {
       const teacher = await Teacher.findOne({ _id: req.session.teacherId, schoolId: school._id, active: { $ne: false } });
@@ -442,7 +487,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
       name = req.session.role === "teacher" ? "General teacher account" : "General student account";
     }
     res.json({
-      user: { userId: req.session.userId, name, role: req.session.role, schoolId: String(school._id), ...(req.session.generalAccount ? { generalAccount: true } : {}), ...(req.session.teacherId ? { teacherId: req.session.teacherId } : {}), ...(req.session.studentId ? { studentId: req.session.studentId } : {}) },
+      user: { userId: req.session.userId, name, role: req.session.role, schoolId: String(school._id), features: await getEffectiveFeatures(school._id), ...(req.session.generalAccount ? { generalAccount: true } : {}), ...(req.session.teacherId ? { teacherId: req.session.teacherId } : {}), ...(req.session.studentId ? { studentId: req.session.studentId } : {}) },
       school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, email: school.email, logo: school.logo, currency: school.currency, timezone: school.timezone, academicYear: school.academicYear, gradingSystem: school.gradingSystem, settings: school.settings, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
     });
   } catch (err) {
@@ -503,6 +548,16 @@ app.get("/api/schools/:id", async (req, res) => {
   }
 });
 
+app.get("/api/schools/:id/features", async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid school ID." });
+    const school = await School.findById(req.params.id).select("status");
+    if (!school) return res.status(404).json({ error: "School not found." });
+    if (["suspended", "archived"].includes(school.status)) return res.status(403).json({ error: "This school account is unavailable." });
+    res.json({ flags: await getEffectiveFeatures(school._id) });
+  } catch { res.status(500).json({ error: "Unable to load school features." }); }
+});
+
 app.post("/api/schools/:id/verify-code", async (req, res) => {
   try {
     const school = await School.findById(req.params.id);
@@ -557,10 +612,43 @@ app.put("/api/schools/:schoolId/colors", requireAuth, requireLegacySchoolAdmin, 
 app.get("/api/dev/schools", devLimiter, requireDevAuth, async (req, res) => {
   try {
     const schools = await School.find().sort({ name: 1 });
-    res.json(schools.map(devSchool));
+    const records = await FeatureFlag.find({ scope: "school", schoolId: { $in: schools.map((school) => school._id) } }).lean();
+    const flagsBySchool = new Map(records.map((record) => [String(record.schoolId), record.flags]));
+    res.json(schools.map((school) => ({ ...devSchool(school), status: school.status, internalNotes: school.internalNotes, featureFlags: flagsBySchool.get(String(school._id)) || {} })));
   } catch (err) {
     res.status(500).json({ error: "Failed to load schools." });
   }
+});
+
+app.get("/api/dev/features", devLimiter, requireDevAuth, async (req, res) => {
+  const record = await FeatureFlag.findOne({ scope: "global", schoolId: null });
+  res.json({ flags: { ...FEATURE_DEFAULTS, ...(record?.flags || {}) } });
+});
+
+app.patch("/api/dev/features", devLimiter, requireDevAuth, async (req, res) => {
+  const allowed = new Set([...Object.keys(FEATURE_DEFAULTS), "maintenance", "newSchoolSignups", "newUserCreation"]);
+  const patch = Object.fromEntries(Object.entries(req.body.flags || {}).filter(([key, value]) => allowed.has(key) && typeof value === "boolean"));
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "Provide at least one supported boolean feature flag." });
+  const record = await FeatureFlag.findOneAndUpdate({ scope: "global", schoolId: null }, { $set: { flags: { ...((await FeatureFlag.findOne({ scope: "global", schoolId: null }))?.flags || {}), ...patch }, updatedBy: "dev-operator" }, $setOnInsert: { scope: "global", schoolId: null } }, { new: true, upsert: true, runValidators: true });
+  res.json({ flags: { ...FEATURE_DEFAULTS, ...record.flags } });
+});
+
+app.patch("/api/dev/schools/:id/features", devLimiter, requireDevAuth, async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid school ID." });
+  if (!await School.exists({ _id: req.params.id })) return res.status(404).json({ error: "School not found." });
+  const patch = Object.fromEntries(Object.entries(req.body.flags || {}).filter(([key, value]) => Object.hasOwn(FEATURE_DEFAULTS, key) && typeof value === "boolean"));
+  if (!Object.keys(patch).length) return res.status(400).json({ error: "Provide at least one supported boolean school feature flag." });
+  const existing = await FeatureFlag.findOne({ scope: "school", schoolId: req.params.id });
+  const record = await FeatureFlag.findOneAndUpdate({ scope: "school", schoolId: req.params.id }, { $set: { flags: { ...(existing?.flags || {}), ...patch }, updatedBy: "dev-operator" }, $setOnInsert: { scope: "school", schoolId: req.params.id } }, { new: true, upsert: true, runValidators: true });
+  res.json({ flags: { ...FEATURE_DEFAULTS, ...(record.flags || {}) } });
+});
+
+app.patch("/api/dev/schools/:id/status", devLimiter, requireDevAuth, async (req, res) => {
+  const status = req.body.status;
+  if (!["active", "suspended", "trial", "archived"].includes(status)) return res.status(400).json({ error: "Status must be active, suspended, trial, or archived." });
+  const school = await School.findByIdAndUpdate(req.params.id, { status, ...(req.body.internalNotes !== undefined ? { internalNotes: String(req.body.internalNotes) } : {}) }, { new: true, runValidators: true });
+  if (!school) return res.status(404).json({ error: "School not found." });
+  res.json({ id: String(school._id), status: school.status });
 });
 
 app.post("/api/dev/schools", devLimiter, requireDevAuth, async (req, res) => {
@@ -1237,7 +1325,7 @@ app.get("/api/teacher/overview", requireAuth, requireTeacher, async (req, res) =
   }
 });
 
-app.get("/api/teacher/attendance", requireAuth, requireTeacher, async (req, res) => {
+app.get("/api/teacher/attendance", requireAuth, requireTeacher, requireFeature("attendance"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1253,7 +1341,7 @@ app.get("/api/teacher/attendance", requireAuth, requireTeacher, async (req, res)
   }
 });
 
-app.post("/api/teacher/attendance", requireAuth, requireTeacher, async (req, res) => {
+app.post("/api/teacher/attendance", requireAuth, requireTeacher, requireFeature("attendance"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1285,7 +1373,7 @@ app.post("/api/teacher/attendance", requireAuth, requireTeacher, async (req, res
   }
 });
 
-app.post("/api/teacher/grades", requireAuth, requireTeacher, async (req, res) => {
+app.post("/api/teacher/grades", requireAuth, requireTeacher, requireFeature("gradebook"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1312,7 +1400,7 @@ app.post("/api/teacher/grades", requireAuth, requireTeacher, async (req, res) =>
   }
 });
 
-app.post("/api/teacher/homework", requireAuth, requireTeacher, async (req, res) => {
+app.post("/api/teacher/homework", requireAuth, requireTeacher, requireFeature("homework"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1327,7 +1415,7 @@ app.post("/api/teacher/homework", requireAuth, requireTeacher, async (req, res) 
   }
 });
 
-app.post("/api/teacher/materials", requireAuth, requireTeacher, async (req, res) => {
+app.post("/api/teacher/materials", requireAuth, requireTeacher, requireFeature("materials"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1350,10 +1438,13 @@ app.get("/api/teacher/my-attendance", requireAuth, requireTeacher, async (req, r
 
 app.post("/api/teacher/check-in", requireAuth, requireTeacher, async (req, res) => {
   try {
-    const date = new Date().toISOString().slice(0, 10);
+    const clientTime = new Date(req.body.clientTime || Date.now());
+    if (Number.isNaN(clientTime.getTime())) return res.status(400).json({ error: "A valid client timestamp is required." });
+    const school = await School.findById(req.session.schoolId).select("timezone");
+    const date = dateInTimezone(clientTime, school?.timezone || "UTC");
     const row = await TeacherAttendance.findOneAndUpdate(
       { schoolId: req.session.schoolId, teacherId: req.session.teacherId, date },
-      { $setOnInsert: { schoolId: req.session.schoolId, teacherId: req.session.teacherId, date, status: "present" }, $set: { checkIn: new Date() } },
+      { $setOnInsert: { schoolId: req.session.schoolId, teacherId: req.session.teacherId, date, status: "present" }, $set: { checkIn: clientTime } },
       { new: true, upsert: true, runValidators: true }
     );
     await writeAudit(req, "teacher.check-in", "teacherAttendance", row._id);
@@ -1363,15 +1454,18 @@ app.post("/api/teacher/check-in", requireAuth, requireTeacher, async (req, res) 
 
 app.post("/api/teacher/check-out", requireAuth, requireTeacher, async (req, res) => {
   try {
-    const date = new Date().toISOString().slice(0, 10);
-    const row = await TeacherAttendance.findOneAndUpdate({ schoolId: req.session.schoolId, teacherId: req.session.teacherId, date, checkIn: { $ne: null } }, { checkOut: new Date() }, { new: true, runValidators: true });
+    const clientTime = new Date(req.body.clientTime || Date.now());
+    if (Number.isNaN(clientTime.getTime())) return res.status(400).json({ error: "A valid client timestamp is required." });
+    const school = await School.findById(req.session.schoolId).select("timezone");
+    const date = dateInTimezone(clientTime, school?.timezone || "UTC");
+    const row = await TeacherAttendance.findOneAndUpdate({ schoolId: req.session.schoolId, teacherId: req.session.teacherId, date, checkIn: { $ne: null } }, { checkOut: clientTime }, { new: true, runValidators: true });
     if (!row) return res.status(409).json({ error: "Check in before checking out." });
     await writeAudit(req, "teacher.check-out", "teacherAttendance", row._id);
     res.json(publicRecord(row));
   } catch { res.status(500).json({ error: "Unable to record check-out." }); }
 });
 
-app.get("/api/teacher/schedule", requireAuth, requireTeacher, async (req, res) => {
+app.get("/api/teacher/schedule", requireAuth, requireTeacher, requireFeature("timetable"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1385,7 +1479,7 @@ app.get("/api/teacher/schedule", requireAuth, requireTeacher, async (req, res) =
   } catch { res.status(500).json({ error: "Unable to load teacher schedule." }); }
 });
 
-app.post("/api/teacher/exams", requireAuth, requireTeacher, async (req, res) => {
+app.post("/api/teacher/exams", requireAuth, requireTeacher, requireFeature("exams"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1397,7 +1491,7 @@ app.post("/api/teacher/exams", requireAuth, requireTeacher, async (req, res) => 
   } catch (err) { res.status(400).json({ error: err.message || "Unable to create exam." }); }
 });
 
-app.get("/api/teacher/assignments", requireAuth, requireTeacher, async (req, res) => {
+app.get("/api/teacher/assignments", requireAuth, requireTeacher, requireFeature("homework"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1408,7 +1502,7 @@ app.get("/api/teacher/assignments", requireAuth, requireTeacher, async (req, res
   } catch { res.status(500).json({ error: "Unable to load assignment submissions." }); }
 });
 
-app.patch("/api/teacher/submissions/:id/grade", requireAuth, requireTeacher, async (req, res) => {
+app.patch("/api/teacher/submissions/:id/grade", requireAuth, requireTeacher, requireFeature("homework"), async (req, res) => {
   try {
     const teacher = await getTeacherProfile(req);
     if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
@@ -1425,7 +1519,7 @@ app.patch("/api/teacher/submissions/:id/grade", requireAuth, requireTeacher, asy
   } catch { res.status(500).json({ error: "Unable to grade submission." }); }
 });
 
-app.post("/api/student/assignments/:homeworkId/submissions", requireAuth, requireStudent, async (req, res) => {
+app.post("/api/student/assignments/:homeworkId/submissions", requireAuth, requireStudent, requireFeature("homework"), async (req, res) => {
   try {
     const student = await Student.findOne({ _id: req.session.studentId, schoolId: req.session.schoolId, active: { $ne: false } });
     const homework = await Homework.findOne({ _id: req.params.homeworkId, schoolId: req.session.schoolId, className: student.className, section: student.section });
@@ -1449,6 +1543,7 @@ app.get("/api/student/overview", requireAuth, requireStudent, async (req, res) =
     const student = await Student.findOne({ _id: req.session.studentId, schoolId: req.session.schoolId, active: { $ne: false } });
     if (!student) return res.status(404).json({ error: "Student account not found." });
     const classFilter = { schoolId: req.session.schoolId, className: student.className, section: student.section };
+    const flags = await getEffectiveFeatures(req.session.schoolId);
     const [school, homework, materials, grades, attendance, timetable, calendar, exams, invoices, submissions] = await Promise.all([
       School.findById(req.session.schoolId),
       Homework.find(classFilter).sort({ createdAt: -1 }).limit(100),
@@ -1465,15 +1560,15 @@ app.get("/api/student/overview", requireAuth, requireStudent, async (req, res) =
     res.json({
       school: school && { id: String(school._id), name: school.name },
       student: { ...publicRecord(student), name: student.name, className: student.className, section: student.section, userId: student.userId },
-      homework: homework.map((item) => ({ ...publicRecord(item), submission: submissionByHomework.has(String(item._id)) ? publicRecord(submissionByHomework.get(String(item._id))) : null })),
-      tests: materials.filter((item) => item.kind === "test").map(publicRecord),
-      materials: materials.filter((item) => item.kind === "material").map(publicRecord),
-      grades: grades.map(publicRecord),
-      attendance: attendance.map((item) => ({ ...publicRecord(item), records: item.records.filter((record) => String(record.studentId) === String(student._id)) })),
-      timetable: timetable.map((item) => ({ ...publicRecord(item), teacherName: item.teacherId?.inchargeName || "" })),
-      calendar: calendar.map(publicRecord),
-      exams: exams.map(publicRecord),
-      fees: invoices.map(feeSummary),
+      homework: flags.homework ? homework.map((item) => ({ ...publicRecord(item), submission: submissionByHomework.has(String(item._id)) ? publicRecord(submissionByHomework.get(String(item._id))) : null })) : [],
+      tests: flags.materials ? materials.filter((item) => item.kind === "test").map(publicRecord) : [],
+      materials: flags.materials ? materials.filter((item) => item.kind === "material").map(publicRecord) : [],
+      grades: flags.gradebook ? grades.map(publicRecord) : [],
+      attendance: flags.attendance ? attendance.map((item) => ({ ...publicRecord(item), records: item.records.filter((record) => String(record.studentId) === String(student._id)) })) : [],
+      timetable: flags.timetable ? timetable.map((item) => ({ ...publicRecord(item), teacherName: item.teacherId?.inchargeName || "" })) : [],
+      calendar: flags.calendar ? calendar.map(publicRecord) : [],
+      exams: flags.exams ? exams.map(publicRecord) : [],
+      fees: flags.fees ? invoices.map(feeSummary) : [],
     });
   } catch (err) {
     console.error("GET /api/student/overview failed:", err);

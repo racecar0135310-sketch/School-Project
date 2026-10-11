@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { adminApi, createTeacherExam, getTeacherAssignments, getTeacherSchedule, gradeTeacherSubmission, submitStudentAssignment, teacherCheckIn, teacherCheckOut } from "../lib/storage.js";
 import { EmptyState, Field, LoadingState, Notice, PageIntro, Panel, PrimaryButton, SecondaryButton, StatusPill } from "./LmsUi.jsx";
+import { useDialog, useToast } from "./UIProvider.jsx";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const field = (label, value, onChange, placeholder = "", type = "text", extra = {}) => <Field label={label} value={value} onChange={onChange} placeholder={placeholder} type={type} {...extra} />;
@@ -24,6 +25,8 @@ export function AdminModules({ view, teachers = [], students = [] }) {
 }
 
 function AdminDataModule({ view, config, teachers, students }) {
+  const { confirm, prompt } = useDialog();
+  const toast = useToast();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -42,34 +45,34 @@ function AdminDataModule({ view, config, teachers, students }) {
     if (payload.maxMarks !== undefined) payload.maxMarks = Number(payload.maxMarks);
     if (payload.amount !== undefined) payload.amount = Number(payload.amount);
     if (payload.discount !== undefined) payload.discount = Number(payload.discount || 0);
-    try { await adminApi(config.endpoint, "POST", payload); setForm(initial); setNotice("Saved successfully."); await load(); } catch (err) { setError(err.message); } finally { setBusy(false); }
+    try { await adminApi(config.endpoint, "POST", payload); setForm(initial); setNotice("Saved successfully."); toast("Saved successfully.", "success"); await load(); } catch (err) { setError(err.message); toast(err.message, "error"); } finally { setBusy(false); }
   };
-  const remove = async (row) => { if (!window.confirm(`Remove ${row.title || row.className || row.subject || row.invoiceNumber || "this record"}?`)) return; try { await adminApi(`${config.endpoint.split("?")[0]}/${row.id}`, "DELETE"); await load(); } catch (err) { setError(err.message); } };
-  const recordPayment = async (row) => { const raw = window.prompt(`Outstanding balance: ${row.balance} ${row.currency}. Enter payment amount:`); if (raw === null) return; const amount = Number(raw); if (!Number.isFinite(amount) || amount <= 0) return setError("Enter a valid positive payment amount."); try { await adminApi(`fees/${row.id}/payments`, "POST", { amount, method: "cash", paidAt: today() }); await load(); } catch (err) { setError(err.message); } };
-  const toggleActive = async (row) => { try { await adminApi(`classes/${row.id}`, "PUT", { ...row, active: !row.active }); await load(); } catch (err) { setError(err.message); } };
+  const remove = async (row) => { const title = row.title || row.className || row.subject || row.invoiceNumber || "this record"; if (!await confirm({ title: "Delete record?", message: `Remove ${title}? This action cannot be undone.`, danger: true, confirmText: "Delete" })) return; try { await adminApi(`${config.endpoint.split("?")[0]}/${row.id}`, "DELETE"); await load(); toast("Record deleted.", "success"); } catch (err) { setError(err.message); toast(err.message, "error"); } };
+  const recordPayment = async (row) => { const raw = await prompt({ title: "Record fee payment", message: `Outstanding balance: ${row.balance} ${row.currency}. Enter the payment amount.`, inputLabel: "Payment amount", inputType: "number", placeholder: "Amount" }); if (raw === null) return; const amount = Number(raw); if (!Number.isFinite(amount) || amount <= 0) return toast("Enter a valid positive payment amount.", "error"); try { await adminApi(`fees/${row.id}/payments`, "POST", { amount, method: "cash", paidAt: today() }); await load(); toast("Payment recorded.", "success"); } catch (err) { setError(err.message); toast(err.message, "error"); } };
+  const toggleActive = async (row) => { try { await adminApi(`classes/${row.id}`, "PUT", { ...row, active: !row.active }); await load(); toast("Attendance corrected.", "success"); } catch (err) { setError(err.message); toast(err.message, "error"); } };
   const editRecord = async (row) => {
-    const ask = (label, value) => window.prompt(label, value ?? "");
+    const ask = (label, value) => prompt({ title: `Edit ${label.toLowerCase()}`, message: "Enter the updated value.", defaultValue: value ?? "", inputLabel: label });
     let payload;
     if (view === "classes") {
-      const className = ask("Class name", row.className); if (className === null) return;
-      const section = ask("Section", row.section); if (section === null) return;
-      const subjects = ask("Subjects (comma-separated)", (row.subjects || []).join(", ")); if (subjects === null) return;
+      const className = await ask("Class name", row.className); if (className === null) return;
+      const section = await ask("Section", row.section); if (section === null) return;
+      const subjects = await ask("Subjects (comma-separated)", (row.subjects || []).join(", ")); if (subjects === null) return;
       payload = { ...row, className, section, subjects: subjects.split(",").map((value)=>value.trim()).filter(Boolean) };
     } else if (view === "calendar") {
-      const title = ask("Event title", row.title); if (title === null) return;
-      const startDate = ask("Start date (YYYY-MM-DD)", row.startDate); if (startDate === null) return;
+      const title = await ask("Event title", row.title); if (title === null) return;
+      const startDate = await ask("Start date (YYYY-MM-DD)", row.startDate); if (startDate === null) return;
       payload = { ...row, title, startDate };
     } else if (view === "exams") {
-      const title = ask("Exam title", row.title); if (title === null) return;
-      const date = ask("Exam date (YYYY-MM-DD)", row.date); if (date === null) return;
-      const status = ask("Status (scheduled, completed, cancelled)", row.status); if (status === null) return;
+      const title = await ask("Exam title", row.title); if (title === null) return;
+      const date = await ask("Exam date (YYYY-MM-DD)", row.date); if (date === null) return;
+      const status = await ask("Status (scheduled, completed, cancelled)", row.status); if (status === null) return;
       payload = { ...row, title, date, status };
     } else if (view === "timetable") {
-      const startTime = ask("Start time (HH:MM)", row.startTime); if (startTime === null) return;
-      const endTime = ask("End time (HH:MM)", row.endTime); if (endTime === null) return;
+      const startTime = await ask("Start time (HH:MM)", row.startTime); if (startTime === null) return;
+      const endTime = await ask("End time (HH:MM)", row.endTime); if (endTime === null) return;
       payload = { ...row, teacherId: row.teacherId?._id || row.teacherId || "", startTime, endTime };
     } else return;
-    try { await adminApi(`${config.endpoint}/${row.id}`, "PUT", payload); await load(); } catch (err) { setError(err.message); }
+    try { await adminApi(`${config.endpoint}/${row.id}`, "PUT", payload); await load(); toast("Changes saved.", "success"); } catch (err) { setError(err.message); toast(err.message, "error"); }
   };
   return <><PageIntro eyebrow="School operations" title={config.title} description={descriptions[view]} action={<StatusPill tone="blue">{rows.length} records</StatusPill>} />
     {error && <div className="mb-4"><Notice>{error}</Notice></div>}{notice && <div className="mb-4"><Notice type="success">{notice}</Notice></div>}
@@ -95,16 +98,18 @@ function ReportsModule() {
 }
 
 function ImportStudents() {
+  const toast = useToast();
   const [csv, setCsv] = useState("userId,name,className,section,rollNumber,parentName,parentPhone,email\n"); const [result, setResult] = useState(null); const [busy,setBusy] = useState(false); const [error,setError] = useState("");
-  const importRows = async (event) => { event.preventDefault(); setBusy(true); setError(""); try { setResult(await adminApi("import/students","POST",{csv})); } catch(err) { setError(err.message); } finally { setBusy(false); } };
+  const importRows = async (event) => { event.preventDefault(); setBusy(true); setError(""); try { setResult(await adminApi("import/students","POST",{csv})); toast("Student import finished.", "success"); } catch(err) { setError(err.message); toast(err.message, "error"); } finally { setBusy(false); } };
   return <><PageIntro eyebrow="User management" title="Import students" description="Paste CSV text with a header row. Required columns: userId and name. Other supported columns: className, section, rollNumber, parentName, parentPhone, email, phone." /><Panel title="CSV import" description="Existing or invalid IDs are skipped and reported; imports never overwrite existing student records."><form onSubmit={importRows} className="space-y-4"><textarea value={csv} onChange={(event) => setCsv(event.target.value)} rows={12} className="w-full rounded-xl border border-slate-200 p-3 font-mono text-xs" /><PrimaryButton type="submit" disabled={busy}>{busy ? "Importing…" : "Import students"}</PrimaryButton></form>{error && <div className="mt-4"><Notice>{error}</Notice></div>}{result && <div className="mt-4"><p className="text-sm font-bold text-emerald-700">Imported {result.created}; skipped {result.skipped.length}.</p>{result.skipped.map((item,index) => <p key={index} className="text-xs text-slate-500">{item.userId || "(empty ID)"}: {item.reason}</p>)}</div>}</Panel></>;
 }
 
 function AdminAttendance() {
+  const toast = useToast();
   const [date,setDate] = useState(today()); const [rows,setRows] = useState([]); const [error,setError] = useState("");
   const load = () => adminApi(`attendance?date=${date}`).then(setRows).catch((err)=>setError(err.message));
   useEffect(()=>{load();},[date]);
-  const update = async (attendanceId, studentId, status) => { try { await adminApi(`attendance/${attendanceId}`,"PATCH",{studentId,status}); await load(); } catch(err) { setError(err.message); } };
+  const update = async (attendanceId, studentId, status) => { try { await adminApi(`attendance/${attendanceId}`, "PATCH", { studentId, status }); await load(); toast("Attendance corrected.", "success"); } catch (err) { setError(err.message); toast(err.message, "error"); } };
   return <><PageIntro eyebrow="School operations" title="Attendance review" description="Review or correct daily attendance submitted by teachers." action={<input aria-label="Attendance date" type="date" value={date} onChange={(event)=>setDate(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />} />{error && <div className="mb-4"><Notice>{error}</Notice></div>}{rows.length ? <div className="space-y-4">{rows.map((row)=><Panel key={row.id} title={`${row.className}${row.section ? ` · ${row.section}` : ""}`} description={`${row.teacherName || "Teacher"} · ${row.date}`}><div className="space-y-2">{row.records.map((record)=><div key={record.studentId} className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-slate-100 p-3"><p className="flex-1 text-sm font-bold">{record.student?.name || "Student"} <span className="text-xs font-normal text-slate-400">{record.student?.rollNumber || ""}</span></p><select value={record.status} onChange={(event)=>update(row.id,record.studentId,event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs capitalize">{["present","late","absent","half-day","leave"].map((status)=><option key={status} value={status}>{status}</option>)}</select></div>)}</div></Panel>)}</div> : <Panel title="Daily register"><EmptyState title="No attendance records" text="No teacher register has been saved for this date." /></Panel>}</>;
 }
 
@@ -139,8 +144,9 @@ export function StudentExtras({ view, data }) {
 }
 
 export function AssignmentSubmission({ item }) {
+  const toast = useToast();
   const [text,setText] = useState(item.submission?.submissionText || ""); const [file,setFile] = useState(null); const [status,setStatus] = useState(""); const [error,setError] = useState("");
-  const send = async () => { setError(""); setStatus("Submitting…"); try { let attachmentData=""; let attachmentName=""; if(file){ if(file.size > 3*1024*1024) throw new Error("Choose a file smaller than 3 MB."); attachmentData=await readFile(file); attachmentName=file.name; } await submitStudentAssignment(item.id,{submissionText:text,attachmentData,attachmentName}); setStatus("Submitted"); } catch(err) { setStatus(""); setError(err.message); } };
+  const send = async () => { setError(""); setStatus("Submitting…"); try { let attachmentData = ""; let attachmentName = ""; if (file) { if (file.size > 3 * 1024 * 1024) throw new Error("Choose a file smaller than 3 MB."); attachmentData = await readFile(file); attachmentName = file.name; } await submitStudentAssignment(item.id, { submissionText: text, attachmentData, attachmentName }); setStatus("Submitted"); toast("Assignment submitted.", "success"); } catch (err) { setStatus(""); setError(err.message); toast(err.message, "error"); } };
   return <div className="mt-4 border-t border-slate-100 pt-3"><p className="text-xs font-semibold text-slate-600">{item.submission ? `Submitted${item.submission.marks !== null ? ` · ${item.submission.marks} marks` : " · Awaiting grade"}` : "Submit your work"}</p>{item.submission?.feedback && <p className="mt-1 text-xs text-emerald-700">Feedback: {item.submission.feedback}</p>}<textarea value={text} onChange={(e)=>setText(e.target.value)} rows={2} placeholder="Write your answer or submission note" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" /><div className="mt-2 flex flex-wrap items-center gap-2"><input type="file" onChange={(e)=>setFile(e.target.files?.[0] || null)} className="min-w-0 text-xs" /><PrimaryButton onClick={send}>{status === "Submitting…" ? status : item.submission ? "Update submission" : "Submit assignment"}</PrimaryButton>{status === "Submitted" && <span className="text-xs text-emerald-700">Submitted</span>}</div>{error && <p className="mt-1 text-xs text-red-600">{error}</p>}</div>;
 }
 

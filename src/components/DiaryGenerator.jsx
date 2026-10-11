@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from "react";
-import { toPng } from "html-to-image";
 import { loadTeachers, findTeacherByName } from "../lib/storage.js";
 import { DEFAULT_COLORS } from "../lib/colors.js";
 
@@ -27,8 +26,7 @@ function todayDay() {
   return new Date().toLocaleDateString("en-US", { weekday: "long" });
 }
 
-let idCounter = 1;
-const newSubjectRow = (subject = "") => ({ id: idCounter++, subject, description: "" });
+const newSubjectRow = (subject = "") => ({ id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`, subject, description: "" });
 
 // `school` is the already-loaded School record; `schoolId` is passed
 // separately since the public School object doesn't necessarily echo its
@@ -93,6 +91,7 @@ export default function DiaryGenerator({ school, schoolId }) {
     if (!previewRef.current) return;
     setSaving(true);
     try {
+      const { toPng } = await import("html-to-image");
       const dataUrl = await toPng(previewRef.current, {
         pixelRatio: 3,
         backgroundColor: colors.background,
@@ -248,7 +247,7 @@ function ResponsiveDiaryFrame({ children }) {
     ro.observe(outer);
     ro.observe(inner);
     return () => ro.disconnect();
-  });
+  }, []);
 
   return (
     <div

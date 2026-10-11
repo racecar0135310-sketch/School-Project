@@ -19,6 +19,8 @@ const schoolSchema = new mongoose.Schema(
     academicYear: { type: String, default: "", trim: true },
     gradingSystem: { type: mongoose.Schema.Types.Mixed, default: [] },
     settings: { type: mongoose.Schema.Types.Mixed, default: {} },
+    status: { type: String, enum: ["active", "suspended", "trial", "archived"], default: "active" },
+    internalNotes: { type: String, default: "" },
     // Legacy diary/admin credentials remain for backwards compatibility with
     // the original /school/:id pages. New login uses the hashed fields below.
     diaryCode: { type: String, required: true, trim: true },

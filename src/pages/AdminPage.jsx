@@ -20,8 +20,8 @@ export default function AdminPage() {
   const { schoolId } = useParams();
   const sessionKey = `legacy-admin-token-${schoolId}`;
 
-  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(sessionKey) || "");
-  const [unlocked, setUnlocked] = useState(() => Boolean(sessionStorage.getItem(sessionKey)));
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem(sessionKey) || "");
+  const [unlocked, setUnlocked] = useState(() => Boolean(localStorage.getItem(sessionKey)));
   const [school, setSchool] = useState(null);
   const [schoolError, setSchoolError] = useState(false);
   const [teachers, setTeachers] = useState([]);
@@ -167,7 +167,7 @@ export default function AdminPage() {
         }}
         placeholder="Enter password"
         onSuccess={(_password, result) => {
-          sessionStorage.setItem(sessionKey, result.token);
+          localStorage.setItem(sessionKey, result.token);
           setAdminToken(result.token);
           setUnlocked(true);
         }}

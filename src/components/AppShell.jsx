@@ -1,44 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { clearSession, getSession, ROLE_META } from "../lib/auth.js";
-
-export const NAV_BY_ROLE = {
-  admin: [
-    ["overview", "Overview", "⌂"],
-    ["teachers", "Teachers", "♙"],
-    ["students", "Students", "♧"],
-    ["attendance", "Attendance review", "✓"],
-    ["staff-attendance", "Teacher attendance", "◷"],
-    ["classes", "Classes & subjects", "▦"],
-    ["timetable", "Timetable", "◷"],
-    ["calendar", "Calendar", "▣"],
-    ["exams", "Exams", "✎"],
-    ["fees", "Fees", "$"],
-    ["reports", "Reports", "▤"],
-    ["import", "Import students", "⇧"],
-    ["audit", "Activity log", "⌁"],
-    ["settings", "School settings", "⚙"],
-  ],
-  teacher: [
-    ["overview", "Overview", "⌂"],
-    ["attendance", "Attendance", "✓"],
-    ["gradebook", "Gradebook", "▤"],
-    ["homework", "Homework", "⌁"],
-    ["materials", "Study material", "▣"],
-    ["schedule", "Schedule & exams", "◷"],
-    ["submissions", "Submissions", "✓"],
-    ["generators", "Generators", "✦"],
-  ],
-  student: [
-    ["overview", "My dashboard", "⌂"],
-    ["diary", "Diary & homework", "⌁"],
-    ["attendance", "My attendance", "✓"],
-    ["tests", "Tests", "▣"],
-    ["results", "Results", "▤"],
-    ["timetable", "Timetable & calendar", "◷"],
-    ["fees", "My fees", "$"],
-  ],
-};
+import { NAV_BY_ROLE, roleAllowsView } from "../config/navigation.js";
+import { useToast } from "./UIProvider.jsx";
+export { NAV_BY_ROLE } from "../config/navigation.js";
 
 const ACCENTS = {
   admin: { dot: "bg-blue-500", active: "bg-blue-50 text-blue-700", button: "bg-blue-600 hover:bg-blue-700", soft: "bg-blue-50", ring: "focus:ring-blue-500" },
@@ -46,23 +11,24 @@ const ACCENTS = {
   student: { dot: "bg-orange-500", active: "bg-orange-50 text-orange-700", button: "bg-orange-500 hover:bg-orange-600", soft: "bg-orange-50", ring: "focus:ring-orange-500" },
 };
 
-export function useDashboardNavigation(role) {
+export function useDashboardNavigation(role, features) {
   const [params, setParams] = useSearchParams();
-  const nav = NAV_BY_ROLE[role] || NAV_BY_ROLE.student;
+  const nav = (NAV_BY_ROLE[role] || NAV_BY_ROLE.student).filter(([view]) => roleAllowsView(role, view, features));
   const requested = params.get("view");
-  const activeView = nav.some(([id]) => id === requested) ? requested : nav[0][0];
+  const activeView = nav.some(([view]) => view === requested) ? requested : nav[0][0];
   const goTo = (view) => setParams({ view }, { replace: true });
   return { nav, activeView, goTo };
 }
 
 export default function AppShell({ session = getSession(), activeView, onNavigate, children }) {
+  const toast = useToast();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const role = session?.user?.role || "student";
   const meta = ROLE_META[role] || ROLE_META.student;
   const accent = ACCENTS[role] || ACCENTS.student;
-  const nav = NAV_BY_ROLE[role] || NAV_BY_ROLE.student;
+  const nav = (NAV_BY_ROLE[role] || NAV_BY_ROLE.student).filter(([view]) => roleAllowsView(role, view, session?.user?.features));
 
   useEffect(() => setMenuOpen(false), [activeView]);
 
@@ -78,7 +44,7 @@ export default function AppShell({ session = getSession(), activeView, onNavigat
         <div className="h-20 px-6 flex items-center border-b border-slate-100"><Link to="/app" className="flex items-center gap-3"><span className={`w-10 h-10 rounded-2xl ${accent.soft} grid place-items-center font-black ${role === "admin" ? "text-blue-700" : role === "teacher" ? "text-emerald-700" : "text-orange-600"}`}>S</span><div><p className="font-black tracking-tight text-slate-900">SchoolFlow</p><p className="text-[10px] text-slate-400">{meta.label} workspace</p></div></Link><button className="ml-auto lg:hidden text-slate-400" onClick={() => setMenuOpen(false)}>✕</button></div>
         <div className="p-4"><div className={`rounded-2xl ${accent.soft} px-4 py-3`}><p className="text-[10px] uppercase tracking-widest text-slate-400">Signed in as</p><p className="mt-1 font-bold text-sm truncate">{session?.user?.name}</p><p className="mt-0.5 text-xs text-slate-500 capitalize">{meta.label}</p></div></div>
         <nav className="px-3 space-y-1 flex-1" aria-label="Main navigation">{nav.map(([id, label, icon]) => <button key={id} onClick={() => onNavigate(id)} className={`w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-left transition ${activeView === id ? accent.active : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}><span className={`w-7 h-7 rounded-lg grid place-items-center text-base ${activeView === id ? "bg-white/70" : "bg-slate-100 text-slate-500"}`}>{icon}</span>{label}{activeView === id && <span className="ml-auto">›</span>}</button>)}</nav>
-        <div className="p-4 border-t border-slate-100 space-y-1"><button onClick={() => onNavigate(role === "admin" ? "settings" : "overview")} className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">⚙ <span>{role === "admin" ? "School settings" : "My profile"}</span></button><button onClick={() => window.alert("You are all caught up.")} className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">♢ <span>Notifications</span></button><Link to="/schools" className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">▦ <span>School diary tools</span></Link><Link to="/" className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">↗ <span>SchoolFlow home</span></Link><button onClick={logout} className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600">⇥ <span>Sign out</span></button></div>
+        <div className="p-4 border-t border-slate-100 space-y-1"><button onClick={() => onNavigate(role === "admin" ? "settings" : "overview")} className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">⚙ <span>{role === "admin" ? "School settings" : "My profile"}</span></button><button onClick={() => toast("You are all caught up.", "success")} className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">♢ <span>Notifications</span></button><Link to="/schools" className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">▦ <span>School diary tools</span></Link><Link to="/" className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">↗ <span>SchoolFlow home</span></Link><button onClick={logout} className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600">⇥ <span>Sign out</span></button></div>
       </aside>
 
       <div className="lg:pl-[18.5rem] min-h-screen">
