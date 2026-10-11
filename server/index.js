@@ -11,6 +11,13 @@ import Attendance from "./Attendance.js";
 import Grade from "./Grade.js";
 import Homework from "./Homework.js";
 import Material from "./Material.js";
+import Classroom from "./Classroom.js";
+import TimetableItem from "./TimetableItem.js";
+import CalendarEvent from "./CalendarEvent.js";
+import Exam from "./Exam.js";
+import FeeInvoice from "./FeeInvoice.js";
+import AssignmentSubmission from "./AssignmentSubmission.js";
+import AuditLog from "./AuditLog.js";
 
 const app = express();
 const scrypt = promisify(crypto.scrypt);
@@ -56,6 +63,13 @@ mongoose
       await Grade.syncIndexes();
       await Homework.syncIndexes();
       await Material.syncIndexes();
+      await Classroom.syncIndexes();
+      await TimetableItem.syncIndexes();
+      await CalendarEvent.syncIndexes();
+      await Exam.syncIndexes();
+      await FeeInvoice.syncIndexes();
+      await AssignmentSubmission.syncIndexes();
+      await AuditLog.syncIndexes();
       console.log("Indexes synced");
     } catch (err) {
       console.error("Failed to sync indexes:", err);
@@ -226,6 +240,24 @@ function publicRecord(document) {
   return { ...document.toObject(), id: String(document._id) };
 }
 
+async function writeAudit(req, action, entity = "", entityId = "", details = {}) {
+  try {
+    await AuditLog.create({
+      schoolId: req.session?.schoolId || null,
+      actorId: req.session?.userId || req.session?.teacherId || req.session?.studentId || "",
+      actorName: req.session?.name || "",
+      role: req.session?.role || "system",
+      action,
+      entity,
+      entityId: String(entityId || ""),
+      ip: req.ip || "",
+      details,
+    });
+  } catch (err) {
+    console.error("Audit log write failed:", err.message);
+  }
+}
+
 async function deleteTeacherRecords(teacherId, schoolId) {
   const filter = { teacherId, ...(schoolId ? { schoolId } : {}) };
   await Promise.all([
@@ -233,12 +265,17 @@ async function deleteTeacherRecords(teacherId, schoolId) {
     Grade.deleteMany(filter),
     Homework.deleteMany(filter),
     Material.deleteMany(filter),
+    TimetableItem.deleteMany(filter),
+    Classroom.updateMany({ schoolId, teacherIds: teacherId }, { $pull: { teacherIds: teacherId } }),
+    Exam.updateMany({ schoolId, createdByTeacherId: teacherId }, { $set: { createdByTeacherId: null } }),
   ]);
 }
 
 async function deleteStudentRecords(studentId, schoolId) {
   await Promise.all([
     Grade.deleteMany({ studentId, schoolId }),
+    FeeInvoice.deleteMany({ studentId, schoolId }),
+    AssignmentSubmission.deleteMany({ studentId, schoolId }),
     Attendance.updateMany(
       { schoolId, "records.studentId": studentId },
       { $pull: { records: { studentId } } }
@@ -254,7 +291,52 @@ async function deleteSchoolRecords(schoolId) {
     Grade.deleteMany({ schoolId }),
     Homework.deleteMany({ schoolId }),
     Material.deleteMany({ schoolId }),
+    Classroom.deleteMany({ schoolId }),
+    TimetableItem.deleteMany({ schoolId }),
+    CalendarEvent.deleteMany({ schoolId }),
+    Exam.deleteMany({ schoolId }),
+    FeeInvoice.deleteMany({ schoolId }),
+    AssignmentSubmission.deleteMany({ schoolId }),
   ]);
+}
+
+function feeSummary(invoice) {
+  const record = invoice.toObject ? invoice.toObject() : invoice;
+  const paid = (record.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const balance = Math.max(0, Number(record.amount || 0) - Number(record.discount || 0) - paid);
+  return { ...record, id: String(record._id), paid, balance, status: balance <= 0 ? "paid" : paid > 0 ? "partial" : "unpaid" };
+}
+
+async function createExam(input, schoolId, createdByTeacherId = null) {
+  const { title, type, className, section, subject, date, startTime, endTime, room, maxMarks, instructions } = input;
+  if (!String(title || "").trim() || !String(className || "").trim() || !String(subject || "").trim() || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) throw new Error("Exam title, class, subject and valid date are required.");
+  if ((startTime || endTime) && (!/^\d{2}:\d{2}$/.test(startTime || "") || !/^\d{2}:\d{2}$/.test(endTime || "") || startTime >= endTime)) throw new Error("Enter a valid exam time range.");
+  const maximum = Number(maxMarks || 100);
+  if (!Number.isFinite(maximum) || maximum < 1) throw new Error("Maximum marks must be at least one.");
+  return Exam.create({ schoolId, title: String(title).trim(), type: type || "unit", className: String(className).trim(), section: String(section || "").trim(), subject: String(subject).trim(), date, startTime: startTime || "", endTime: endTime || "", room: String(room || "").trim(), maxMarks: maximum, instructions: String(instructions || "").trim(), ...(createdByTeacherId ? { createdByTeacherId } : {}) });
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"' && quoted && text[index + 1] === '"') { cell += '"'; index += 1; }
+    else if (character === '"') quoted = !quoted;
+    else if (character === "," && !quoted) { row.push(cell.trim()); cell = ""; }
+    else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = []; cell = "";
+    } else cell += character;
+  }
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  const headers = (rows.shift() || []).map((header) => header.replace(/^\uFEFF/, "").trim());
+  return rows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] || ""])));
 }
 
 app.post("/api/auth/login", async (req, res) => {
@@ -371,7 +453,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
     }
     res.json({
       user: { userId: req.session.userId, name, role: req.session.role, schoolId: String(school._id), ...(req.session.generalAccount ? { generalAccount: true } : {}), ...(req.session.teacherId ? { teacherId: req.session.teacherId } : {}), ...(req.session.studentId ? { studentId: req.session.studentId } : {}) },
-      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
+      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, email: school.email, logo: school.logo, currency: school.currency, timezone: school.timezone, academicYear: school.academicYear, gradingSystem: school.gradingSystem, settings: school.settings, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
     });
   } catch (err) {
     res.status(500).json({ error: "Unable to load your account." });
@@ -615,7 +697,7 @@ app.get("/api/admin/summary", requireAuth, requireAdmin, async (req, res) => {
     ]);
     if (!school) return res.status(404).json({ error: "School not found." });
     res.json({
-      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
+      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, email: school.email, logo: school.logo, currency: school.currency, timezone: school.timezone, academicYear: school.academicYear, gradingSystem: school.gradingSystem, settings: school.settings, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
       teachers,
       students,
       classes: classes.length,
@@ -783,6 +865,13 @@ app.put("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
       name: (name || "").trim(),
       address: (address || "").trim(),
       phone: (phone || "").trim(),
+      ...(req.body.email !== undefined ? { email: String(req.body.email).trim().toLowerCase() } : {}),
+      ...(req.body.logo !== undefined ? { logo: req.body.logo } : {}),
+      ...(req.body.currency !== undefined ? { currency: String(req.body.currency || "PKR").trim().toUpperCase() } : {}),
+      ...(req.body.timezone !== undefined ? { timezone: String(req.body.timezone || "Asia/Karachi").trim() } : {}),
+      ...(req.body.academicYear !== undefined ? { academicYear: String(req.body.academicYear).trim() } : {}),
+      ...(req.body.gradingSystem !== undefined ? { gradingSystem: req.body.gradingSystem } : {}),
+      ...(req.body.settings !== undefined ? { settings: req.body.settings } : {}),
       teacherLoginId,
       studentLoginId,
       ...(colors && typeof colors === "object" ? { colors } : {}),
@@ -791,10 +880,250 @@ app.put("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
     };
     const school = await School.findByIdAndUpdate(schoolId, updates, { new: true, runValidators: true });
     if (!school) return res.status(404).json({ error: "School not found." });
-    res.json({ school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId } });
+    await writeAudit(req, "school.settings.updated", "school", school._id);
+    res.json({ school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, email: school.email, logo: school.logo, currency: school.currency, timezone: school.timezone, academicYear: school.academicYear, gradingSystem: school.gradingSystem, settings: school.settings, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId } });
   } catch (err) {
     res.status(500).json({ error: "Unable to save school settings." });
   }
+});
+
+// Admin academic setup and operational controls.
+app.get("/api/admin/classes", requireAuth, requireAdmin, async (req, res) => {
+  const rows = await Classroom.find({ schoolId: req.session.schoolId }).sort({ className: 1, section: 1 });
+  res.json(rows.map(publicRecord));
+});
+
+app.post("/api/admin/classes", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { className, section, subjects, teacherIds, academicYear } = req.body;
+    if (!String(className || "").trim()) return res.status(400).json({ error: "Class name is required." });
+    const ids = Array.isArray(teacherIds) ? teacherIds : [];
+    const teachers = ids.length ? await Teacher.countDocuments({ _id: { $in: ids }, schoolId: req.session.schoolId }) : 0;
+    if (teachers !== ids.length) return res.status(400).json({ error: "One or more assigned teachers do not belong to this school." });
+    const row = await Classroom.create({ schoolId: req.session.schoolId, className: String(className).trim(), section: String(section || "").trim(), subjects: Array.isArray(subjects) ? subjects.map((item) => String(item).trim()).filter(Boolean) : [], teacherIds: ids, academicYear: String(academicYear || "").trim() });
+    await writeAudit(req, "class.created", "class", row._id);
+    res.status(201).json(publicRecord(row));
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "That class and section already exist." });
+    res.status(500).json({ error: "Unable to create class." });
+  }
+});
+
+app.put("/api/admin/classes/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { className, section, subjects, teacherIds, academicYear, active } = req.body;
+    if (!String(className || "").trim()) return res.status(400).json({ error: "Class name is required." });
+    const ids = Array.isArray(teacherIds) ? teacherIds : [];
+    const teachers = ids.length ? await Teacher.countDocuments({ _id: { $in: ids }, schoolId: req.session.schoolId }) : 0;
+    if (teachers !== ids.length) return res.status(400).json({ error: "One or more assigned teachers do not belong to this school." });
+    const row = await Classroom.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { className: String(className).trim(), section: String(section || "").trim(), subjects: Array.isArray(subjects) ? subjects.map((item) => String(item).trim()).filter(Boolean) : [], teacherIds: ids, academicYear: String(academicYear || "").trim(), ...(typeof active === "boolean" ? { active } : {}) }, { new: true, runValidators: true });
+    if (!row) return res.status(404).json({ error: "Class not found." });
+    await writeAudit(req, "class.updated", "class", row._id);
+    res.json(publicRecord(row));
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ error: "That class and section already exist." });
+    res.status(500).json({ error: "Unable to update class." });
+  }
+});
+
+app.delete("/api/admin/classes/:id", requireAuth, requireAdmin, async (req, res) => {
+  const row = await Classroom.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { active: false }, { new: true });
+  if (!row) return res.status(404).json({ error: "Class not found." });
+  await writeAudit(req, "class.deactivated", "class", row._id);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/timetable", requireAuth, requireAdmin, async (req, res) => {
+  const rows = await TimetableItem.find({ schoolId: req.session.schoolId }).populate("teacherId", "inchargeName").sort({ weekday: 1, startTime: 1 });
+  res.json(rows.map((row) => ({ ...publicRecord(row), teacherName: row.teacherId?.inchargeName || "" })));
+});
+
+app.post("/api/admin/timetable", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { className, section, subject, teacherId, weekday, startTime, endTime, room } = req.body;
+    if (!String(className || "").trim() || !String(subject || "").trim() || !/^\d{2}:\d{2}$/.test(startTime || "") || !/^\d{2}:\d{2}$/.test(endTime || "") || startTime >= endTime || !Number.isInteger(Number(weekday)) || Number(weekday) < 0 || Number(weekday) > 6) return res.status(400).json({ error: "Enter a class, subject, valid weekday and time range." });
+    if (teacherId && !await Teacher.exists({ _id: teacherId, schoolId: req.session.schoolId })) return res.status(400).json({ error: "Teacher does not belong to this school." });
+    const overlap = await TimetableItem.findOne({ schoolId: req.session.schoolId, weekday: Number(weekday), startTime: { $lt: endTime }, endTime: { $gt: startTime }, $or: [{ className, section: section || "" }, ...(teacherId ? [{ teacherId }] : [])] });
+    if (overlap) return res.status(409).json({ error: "That time overlaps another class or teacher timetable entry." });
+    const row = await TimetableItem.create({ schoolId: req.session.schoolId, className: String(className).trim(), section: String(section || "").trim(), subject: String(subject).trim(), teacherId: teacherId || null, weekday: Number(weekday), startTime, endTime, room: String(room || "").trim() });
+    await writeAudit(req, "timetable.created", "timetable", row._id);
+    res.status(201).json(publicRecord(row));
+  } catch (err) { res.status(500).json({ error: "Unable to create timetable entry." }); }
+});
+
+app.put("/api/admin/timetable/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { className, section, subject, teacherId, weekday, startTime, endTime, room } = req.body;
+    if (!String(className || "").trim() || !String(subject || "").trim() || !/^\d{2}:\d{2}$/.test(startTime || "") || !/^\d{2}:\d{2}$/.test(endTime || "") || startTime >= endTime || !Number.isInteger(Number(weekday)) || Number(weekday) < 0 || Number(weekday) > 6) return res.status(400).json({ error: "Enter a class, subject, valid weekday and time range." });
+    if (teacherId && !await Teacher.exists({ _id: teacherId, schoolId: req.session.schoolId })) return res.status(400).json({ error: "Teacher does not belong to this school." });
+    const row = await TimetableItem.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { className: String(className).trim(), section: String(section || "").trim(), subject: String(subject).trim(), teacherId: teacherId || null, weekday: Number(weekday), startTime, endTime, room: String(room || "").trim() }, { new: true, runValidators: true });
+    if (!row) return res.status(404).json({ error: "Timetable entry not found." });
+    await writeAudit(req, "timetable.updated", "timetable", row._id);
+    res.json(publicRecord(row));
+  } catch { res.status(400).json({ error: "Unable to update timetable entry." }); }
+});
+
+app.delete("/api/admin/timetable/:id", requireAuth, requireAdmin, async (req, res) => {
+  const row = await TimetableItem.findOneAndDelete({ _id: req.params.id, schoolId: req.session.schoolId });
+  if (!row) return res.status(404).json({ error: "Timetable entry not found." });
+  await writeAudit(req, "timetable.deleted", "timetable", row._id);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/calendar", requireAuth, requireAdmin, async (req, res) => {
+  const rows = await CalendarEvent.find({ schoolId: req.session.schoolId }).sort({ startDate: 1 });
+  res.json(rows.map(publicRecord));
+});
+
+app.post("/api/admin/calendar", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { title, kind, startDate, endDate, description } = req.body;
+    if (!String(title || "").trim() || !/^\d{4}-\d{2}-\d{2}$/.test(startDate || "")) return res.status(400).json({ error: "Event title and a valid start date are required." });
+    const row = await CalendarEvent.create({ schoolId: req.session.schoolId, title: String(title).trim(), kind: kind || "event", startDate, endDate: endDate || startDate, description: String(description || "").trim() });
+    await writeAudit(req, "calendar.created", "calendarEvent", row._id);
+    res.status(201).json(publicRecord(row));
+  } catch (err) { res.status(400).json({ error: "Unable to create calendar event." }); }
+});
+
+app.put("/api/admin/calendar/:id", requireAuth, requireAdmin, async (req, res) => {
+  const { title, kind, startDate, endDate, description } = req.body;
+  if (!String(title || "").trim() || !/^\d{4}-\d{2}-\d{2}$/.test(startDate || "")) return res.status(400).json({ error: "Event title and a valid start date are required." });
+  try {
+    const row = await CalendarEvent.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { title: String(title).trim(), kind: kind || "event", startDate, endDate: endDate || startDate, description: String(description || "").trim() }, { new: true, runValidators: true });
+    if (!row) return res.status(404).json({ error: "Calendar event not found." });
+    await writeAudit(req, "calendar.updated", "calendarEvent", row._id);
+    res.json(publicRecord(row));
+  } catch { res.status(400).json({ error: "Unable to update calendar event." }); }
+});
+
+app.delete("/api/admin/calendar/:id", requireAuth, requireAdmin, async (req, res) => {
+  const row = await CalendarEvent.findOneAndDelete({ _id: req.params.id, schoolId: req.session.schoolId });
+  if (!row) return res.status(404).json({ error: "Calendar event not found." });
+  await writeAudit(req, "calendar.deleted", "calendarEvent", row._id);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/exams", requireAuth, requireAdmin, async (req, res) => {
+  const rows = await Exam.find({ schoolId: req.session.schoolId }).sort({ date: 1, startTime: 1 });
+  res.json(rows.map(publicRecord));
+});
+
+app.post("/api/admin/exams", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const row = await createExam(req.body, req.session.schoolId);
+    await writeAudit(req, "exam.created", "exam", row._id);
+    res.status(201).json(publicRecord(row));
+  } catch (err) { res.status(400).json({ error: err.message || "Unable to schedule exam." }); }
+});
+
+app.put("/api/admin/exams/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { title, type, className, section, subject, date, startTime, endTime, room, maxMarks, instructions, status } = req.body;
+    if (!String(title || "").trim() || !String(className || "").trim() || !String(subject || "").trim() || !/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return res.status(400).json({ error: "Exam title, class, subject and valid date are required." });
+    const row = await Exam.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { title: String(title).trim(), type: type || "unit", className: String(className).trim(), section: String(section || "").trim(), subject: String(subject).trim(), date, startTime: startTime || "", endTime: endTime || "", room: String(room || "").trim(), maxMarks: Number(maxMarks) || 100, instructions: String(instructions || "").trim(), status: status || "scheduled" }, { new: true, runValidators: true });
+    if (!row) return res.status(404).json({ error: "Exam not found." });
+    await writeAudit(req, "exam.updated", "exam", row._id);
+    res.json(publicRecord(row));
+  } catch (err) { res.status(400).json({ error: "Unable to update exam." }); }
+});
+
+app.delete("/api/admin/exams/:id", requireAuth, requireAdmin, async (req, res) => {
+  const row = await Exam.findOneAndDelete({ _id: req.params.id, schoolId: req.session.schoolId });
+  if (!row) return res.status(404).json({ error: "Exam not found." });
+  await writeAudit(req, "exam.deleted", "exam", row._id);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/fees", requireAuth, requireAdmin, async (req, res) => {
+  const rows = await FeeInvoice.find({ schoolId: req.session.schoolId }).populate("studentId", "name userId className section rollNumber").sort({ dueDate: 1 });
+  res.json(rows.map(feeSummary));
+});
+
+app.post("/api/admin/fees", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { studentId, head, amount, discount, dueDate, notes } = req.body;
+    const value = Number(amount);
+    if (!studentId || !String(head || "").trim() || !Number.isFinite(value) || value <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate || "")) return res.status(400).json({ error: "Student, fee head, positive amount and due date are required." });
+    if (Number(discount || 0) < 0 || Number(discount || 0) >= value) return res.status(400).json({ error: "Discount must be less than the invoice amount." });
+    const student = await Student.findOne({ _id: studentId, schoolId: req.session.schoolId });
+    if (!student) return res.status(404).json({ error: "Student not found." });
+    const invoiceNumber = `SF-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
+    const invoice = await FeeInvoice.create({ schoolId: req.session.schoolId, studentId, invoiceNumber, head: String(head).trim(), amount: value, discount: Number(discount || 0), currency: (await School.findById(req.session.schoolId))?.currency || "PKR", dueDate, notes: String(notes || "").trim() });
+    await writeAudit(req, "fee.invoice.created", "feeInvoice", invoice._id, { amount: value });
+    res.status(201).json(feeSummary(invoice));
+  } catch (err) { res.status(500).json({ error: "Unable to create fee invoice." }); }
+});
+
+app.post("/api/admin/fees/:id/payments", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "Payment amount must be greater than zero." });
+    const invoice = await FeeInvoice.findOne({ _id: req.params.id, schoolId: req.session.schoolId });
+    if (!invoice) return res.status(404).json({ error: "Invoice not found." });
+    const outstanding = invoice.amount - invoice.discount - invoice.payments.reduce((sum, payment) => sum + payment.amount, 0);
+    if (amount > outstanding) return res.status(400).json({ error: "Payment exceeds the outstanding balance." });
+    invoice.payments.push({ amount, paidAt: req.body.paidAt || new Date().toISOString().slice(0, 10), method: req.body.method || "cash", reference: String(req.body.reference || "").trim(), recordedBy: req.session.userId });
+    await invoice.save();
+    await writeAudit(req, "fee.payment.recorded", "feeInvoice", invoice._id, { amount });
+    res.json(feeSummary(invoice));
+  } catch (err) { res.status(400).json({ error: "Unable to record payment." }); }
+});
+
+app.patch("/api/admin/teachers/:id/active", requireAuth, requireAdmin, async (req, res) => {
+  const row = await Teacher.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { active: req.body.active === true }, { new: true });
+  if (!row) return res.status(404).json({ error: "Teacher not found." });
+  await writeAudit(req, row.active ? "teacher.activated" : "teacher.suspended", "teacher", row._id);
+  res.json({ id: String(row._id), active: row.active });
+});
+
+app.patch("/api/admin/students/:id/active", requireAuth, requireAdmin, async (req, res) => {
+  const row = await Student.findOneAndUpdate({ _id: req.params.id, schoolId: req.session.schoolId }, { active: req.body.active === true }, { new: true });
+  if (!row) return res.status(404).json({ error: "Student not found." });
+  await writeAudit(req, row.active ? "student.activated" : "student.suspended", "student", row._id);
+  res.json({ id: String(row._id), active: row.active });
+});
+
+app.get("/api/admin/audit", requireAuth, requireAdmin, async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+  const rows = await AuditLog.find({ schoolId: req.session.schoolId }).sort({ createdAt: -1 }).limit(limit);
+  res.json(rows.map(publicRecord));
+});
+
+app.get("/api/admin/reports/summary", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const schoolId = req.session.schoolId;
+    const [students, teachers, classes, attendance, grades, invoices] = await Promise.all([
+      Student.countDocuments({ schoolId, active: { $ne: false } }),
+      Teacher.countDocuments({ schoolId, active: { $ne: false } }),
+      Classroom.countDocuments({ schoolId, active: true }),
+      Attendance.find({ schoolId }).select("records").lean(),
+      Grade.find({ schoolId }).select("marks maxMarks").lean(),
+      FeeInvoice.find({ schoolId }).select("amount discount payments").lean(),
+    ]);
+    const marks = attendance.flatMap((day) => day.records || []);
+    const paid = invoices.reduce((sum, invoice) => sum + invoice.payments.reduce((sub, payment) => sub + payment.amount, 0), 0);
+    const billed = invoices.reduce((sum, invoice) => sum + invoice.amount - invoice.discount, 0);
+    res.json({ students, teachers, classes, attendanceRate: marks.length ? Math.round(marks.filter((item) => item.status === "present").length * 100 / marks.length) : null, gradeAverage: grades.length ? Math.round(grades.reduce((sum, item) => sum + (item.marks / item.maxMarks) * 100, 0) / grades.length) : null, feesCollected: paid, feesOutstanding: Math.max(0, billed - paid), invoices: invoices.length });
+  } catch (err) { res.status(500).json({ error: "Unable to build school summary report." }); }
+});
+
+app.post("/api/admin/import/students", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const records = Array.isArray(req.body.records) ? req.body.records : parseCsv(String(req.body.csv || ""));
+    if (!records.length) return res.status(400).json({ error: "Provide CSV rows or a records array." });
+    const results = { created: 0, skipped: [] };
+    for (const record of records) {
+      const userId = String(record.userId || "").trim().toLowerCase();
+      const name = String(record.name || "").trim();
+      if (!userId || !name || await loginIdIsInUse(userId, { schoolId: req.session.schoolId, role: "student" })) { results.skipped.push({ userId, reason: "Missing ID/name or login ID already in use." }); continue; }
+      try {
+        await Student.create({ schoolId: req.session.schoolId, userId, name, className: String(record.className || "").trim(), section: String(record.section || "").trim(), rollNumber: String(record.rollNumber || "").trim(), parentName: String(record.parentName || "").trim(), parentPhone: String(record.parentPhone || "").trim(), email: String(record.email || "").trim().toLowerCase(), phone: String(record.phone || "").trim() });
+        results.created += 1;
+      } catch { results.skipped.push({ userId, reason: "Could not create record (duplicate or invalid data)." }); }
+    }
+    await writeAudit(req, "student.bulk_import", "student", "", { created: results.created, skipped: results.skipped.length });
+    res.json(results);
+  } catch (err) { res.status(400).json({ error: "Unable to import student data." }); }
 });
 
 // ---------------------------------------------------------------------
@@ -850,7 +1179,7 @@ app.post("/api/teacher/attendance", requireAuth, requireTeacher, async (req, res
     const date = String(req.body.date || "").trim();
     const records = Array.isArray(req.body.records) ? req.body.records : null;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !records) return res.status(400).json({ error: "A valid date and attendance records are required." });
-    const allowedStatuses = new Set(["present", "absent", "late"]);
+    const allowedStatuses = new Set(["present", "absent", "late", "half-day", "leave"]);
     if (records.some((record) => !record.studentId || !allowedStatuses.has(record.status))) {
       return res.status(400).json({ error: "Each attendance record needs a student and a valid status." });
     }
@@ -921,26 +1250,106 @@ app.post("/api/teacher/materials", requireAuth, requireTeacher, async (req, res)
   }
 });
 
+app.get("/api/teacher/schedule", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacher = await getTeacherProfile(req);
+    if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
+    const [timetable, calendar, exams] = await Promise.all([
+      TimetableItem.find({ schoolId: req.session.schoolId, teacherId: teacher._id }).sort({ weekday: 1, startTime: 1 }),
+      CalendarEvent.find({ schoolId: req.session.schoolId, startDate: { $gte: new Date().toISOString().slice(0, 10) } }).sort({ startDate: 1 }).limit(100),
+      Exam.find({ schoolId: req.session.schoolId, className: teacher.className, section: teacher.section, status: "scheduled" }).sort({ date: 1 }),
+    ]);
+    res.json({ timetable: timetable.map(publicRecord), calendar: calendar.map(publicRecord), exams: exams.map(publicRecord) });
+  } catch { res.status(500).json({ error: "Unable to load teacher schedule." }); }
+});
+
+app.post("/api/teacher/exams", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacher = await getTeacherProfile(req);
+    if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
+    const row = await createExam({ ...req.body, className: teacher.className, section: teacher.section }, req.session.schoolId, teacher._id);
+    await writeAudit(req, "exam.created", "exam", row._id);
+    res.status(201).json(publicRecord(row));
+  } catch (err) { res.status(400).json({ error: err.message || "Unable to create exam." }); }
+});
+
+app.get("/api/teacher/assignments", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacher = await getTeacherProfile(req);
+    if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
+    const homework = await Homework.find({ schoolId: req.session.schoolId, teacherId: teacher._id }).select("_id title subject className section dueDate");
+    const ids = homework.map((item) => item._id);
+    const submissions = await AssignmentSubmission.find({ schoolId: req.session.schoolId, homeworkId: { $in: ids } }).populate("studentId", "name userId rollNumber").sort({ submittedAt: -1 });
+    res.json({ homework: homework.map(publicRecord), submissions: submissions.map((item) => ({ ...publicRecord(item), student: item.studentId ? { id: String(item.studentId._id), name: item.studentId.name, userId: item.studentId.userId, rollNumber: item.studentId.rollNumber } : null })) });
+  } catch { res.status(500).json({ error: "Unable to load assignment submissions." }); }
+});
+
+app.patch("/api/teacher/submissions/:id/grade", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacher = await getTeacherProfile(req);
+    if (!teacher) return res.status(404).json({ error: "Teacher account not found." });
+    const submission = await AssignmentSubmission.findOne({ _id: req.params.id, schoolId: req.session.schoolId }).populate("homeworkId");
+    if (!submission || String(submission.homeworkId.teacherId) !== String(teacher._id)) return res.status(404).json({ error: "Submission not found." });
+    const marks = Number(req.body.marks);
+    if (!Number.isFinite(marks) || marks < 0) return res.status(400).json({ error: "Enter a valid non-negative mark." });
+    submission.marks = marks;
+    submission.feedback = String(req.body.feedback || "").trim();
+    submission.gradedAt = new Date();
+    await submission.save();
+    await writeAudit(req, "assignment.graded", "assignmentSubmission", submission._id);
+    res.json(publicRecord(submission));
+  } catch { res.status(500).json({ error: "Unable to grade submission." }); }
+});
+
+app.post("/api/student/assignments/:homeworkId/submissions", requireAuth, requireStudent, async (req, res) => {
+  try {
+    const student = await Student.findOne({ _id: req.session.studentId, schoolId: req.session.schoolId, active: { $ne: false } });
+    const homework = await Homework.findOne({ _id: req.params.homeworkId, schoolId: req.session.schoolId, className: student.className, section: student.section });
+    if (!homework) return res.status(404).json({ error: "Assignment not found for your class." });
+    const submissionText = String(req.body.submissionText || "").trim();
+    const attachmentData = String(req.body.attachmentData || "");
+    if (!submissionText && !attachmentData) return res.status(400).json({ error: "Add submission text or attach a file." });
+    if (attachmentData.length > 5 * 1024 * 1024) return res.status(413).json({ error: "Submission file exceeds the 5 MB limit." });
+    const submission = await AssignmentSubmission.findOneAndUpdate(
+      { schoolId: req.session.schoolId, homeworkId: homework._id, studentId: student._id },
+      { schoolId: req.session.schoolId, homeworkId: homework._id, studentId: student._id, submissionText, attachmentData, attachmentName: String(req.body.attachmentName || ""), submittedAt: new Date(), marks: null, feedback: "", gradedAt: null },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    );
+    await writeAudit(req, "assignment.submitted", "assignmentSubmission", submission._id);
+    res.json(publicRecord(submission));
+  } catch { res.status(500).json({ error: "Unable to submit assignment." }); }
+});
+
 app.get("/api/student/overview", requireAuth, requireStudent, async (req, res) => {
   try {
     const student = await Student.findOne({ _id: req.session.studentId, schoolId: req.session.schoolId, active: { $ne: false } });
     if (!student) return res.status(404).json({ error: "Student account not found." });
     const classFilter = { schoolId: req.session.schoolId, className: student.className, section: student.section };
-    const [school, homework, materials, grades, attendance] = await Promise.all([
+    const [school, homework, materials, grades, attendance, timetable, calendar, exams, invoices, submissions] = await Promise.all([
       School.findById(req.session.schoolId),
       Homework.find(classFilter).sort({ createdAt: -1 }).limit(100),
       Material.find(classFilter).sort({ createdAt: -1 }).limit(100),
       Grade.find({ schoolId: req.session.schoolId, studentId: student._id }).sort({ createdAt: -1 }).limit(100),
       Attendance.find({ schoolId: req.session.schoolId, "records.studentId": student._id }).sort({ date: -1 }).limit(100),
+      TimetableItem.find({ ...classFilter }).populate("teacherId", "inchargeName").sort({ weekday: 1, startTime: 1 }),
+      CalendarEvent.find({ schoolId: req.session.schoolId, startDate: { $gte: new Date().toISOString().slice(0, 10) } }).sort({ startDate: 1 }).limit(100),
+      Exam.find({ ...classFilter, status: "scheduled" }).sort({ date: 1 }),
+      FeeInvoice.find({ schoolId: req.session.schoolId, studentId: student._id }).sort({ dueDate: 1 }),
+      AssignmentSubmission.find({ schoolId: req.session.schoolId, studentId: student._id }),
     ]);
+    const submissionByHomework = new Map(submissions.map((submission) => [String(submission.homeworkId), submission]));
     res.json({
       school: school && { id: String(school._id), name: school.name },
       student: { ...publicRecord(student), name: student.name, className: student.className, section: student.section, userId: student.userId },
-      homework: homework.map(publicRecord),
+      homework: homework.map((item) => ({ ...publicRecord(item), submission: submissionByHomework.has(String(item._id)) ? publicRecord(submissionByHomework.get(String(item._id))) : null })),
       tests: materials.filter((item) => item.kind === "test").map(publicRecord),
       materials: materials.filter((item) => item.kind === "material").map(publicRecord),
       grades: grades.map(publicRecord),
       attendance: attendance.map((item) => ({ ...publicRecord(item), records: item.records.filter((record) => String(record.studentId) === String(student._id)) })),
+      timetable: timetable.map((item) => ({ ...publicRecord(item), teacherName: item.teacherId?.inchargeName || "" })),
+      calendar: calendar.map(publicRecord),
+      exams: exams.map(publicRecord),
+      fees: invoices.map(feeSummary),
     });
   } catch (err) {
     console.error("GET /api/student/overview failed:", err);

@@ -181,6 +181,9 @@ export async function removeAdminStudent(id) {
 export async function saveAdminSettings(settings) {
   return request("/api/admin/settings", { method: "PUT", body: JSON.stringify(settings) });
 }
+export async function adminApi(path, method = "GET", payload) {
+  return request(`/api/admin/${path}`, { method, ...(payload === undefined ? {} : { body: JSON.stringify(payload) }) });
+}
 
 // ---------------------------------------------------------------------
 // Teacher dashboard
@@ -203,10 +206,17 @@ export async function addTeacherHomework(payload) {
 export async function addTeacherMaterial(payload) {
   return request("/api/teacher/materials", { method: "POST", body: JSON.stringify(payload) });
 }
+export async function getTeacherSchedule() { return request("/api/teacher/schedule"); }
+export async function createTeacherExam(payload) { return request("/api/teacher/exams", { method: "POST", body: JSON.stringify(payload) }); }
+export async function getTeacherAssignments() { return request("/api/teacher/assignments"); }
+export async function gradeTeacherSubmission(id, payload) { return request(`/api/teacher/submissions/${id}/grade`, { method: "PATCH", body: JSON.stringify(payload) }); }
 
 // ---------------------------------------------------------------------
 // Student dashboard
 // ---------------------------------------------------------------------
 export async function getStudentOverview() {
   return request("/api/student/overview");
+}
+export async function submitStudentAssignment(homeworkId, payload) {
+  return request(`/api/student/assignments/${homeworkId}/submissions`, { method: "POST", body: JSON.stringify(payload) });
 }

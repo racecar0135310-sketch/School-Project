@@ -12,6 +12,13 @@ const schoolSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     address: { type: String, default: "", trim: true },
     phone: { type: String, default: "", trim: true },
+    email: { type: String, default: "", trim: true, lowercase: true },
+    logo: { type: String, default: "" },
+    currency: { type: String, default: "PKR", trim: true, uppercase: true },
+    timezone: { type: String, default: "Asia/Karachi", trim: true },
+    academicYear: { type: String, default: "", trim: true },
+    gradingSystem: { type: mongoose.Schema.Types.Mixed, default: [] },
+    settings: { type: mongoose.Schema.Types.Mixed, default: {} },
     // Legacy diary/admin credentials remain for backwards compatibility with
     // the original /school/:id pages. New login uses the hashed fields below.
     diaryCode: { type: String, required: true, trim: true },

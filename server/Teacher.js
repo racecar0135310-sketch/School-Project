@@ -7,6 +7,8 @@ const teacherSchema = new mongoose.Schema(
     // stable ID used by the central login page.
     userId: { type: String, trim: true, lowercase: true, sparse: true },
     inchargeName: { type: String, required: true, trim: true },
+    email: { type: String, default: "", trim: true, lowercase: true },
+    phone: { type: String, default: "", trim: true },
     className: { type: String, default: "", trim: true },
     section: { type: String, default: "", trim: true },
     subjects: { type: [String], default: [] },

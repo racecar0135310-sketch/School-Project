@@ -5,6 +5,8 @@ const studentSchema = new mongoose.Schema(
     schoolId: { type: mongoose.Schema.Types.ObjectId, ref: "School", required: true, index: true },
     userId: { type: String, required: true, trim: true, lowercase: true },
     name: { type: String, required: true, trim: true },
+    email: { type: String, default: "", trim: true, lowercase: true },
+    phone: { type: String, default: "", trim: true },
     className: { type: String, default: "", trim: true },
     section: { type: String, default: "", trim: true },
     rollNumber: { type: String, default: "", trim: true },

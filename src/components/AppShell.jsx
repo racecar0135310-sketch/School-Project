@@ -7,6 +7,14 @@ export const NAV_BY_ROLE = {
     ["overview", "Overview", "⌂"],
     ["teachers", "Teachers", "♙"],
     ["students", "Students", "♧"],
+    ["classes", "Classes & subjects", "▦"],
+    ["timetable", "Timetable", "◷"],
+    ["calendar", "Calendar", "▣"],
+    ["exams", "Exams", "✎"],
+    ["fees", "Fees", "$"],
+    ["reports", "Reports", "▤"],
+    ["import", "Import students", "⇧"],
+    ["audit", "Activity log", "⌁"],
     ["settings", "School settings", "⚙"],
   ],
   teacher: [
@@ -15,6 +23,8 @@ export const NAV_BY_ROLE = {
     ["gradebook", "Gradebook", "▤"],
     ["homework", "Homework", "⌁"],
     ["materials", "Study material", "▣"],
+    ["schedule", "Schedule & exams", "◷"],
+    ["submissions", "Submissions", "✓"],
     ["generators", "Generators", "✦"],
   ],
   student: [
@@ -22,6 +32,8 @@ export const NAV_BY_ROLE = {
     ["diary", "Diary & homework", "⌁"],
     ["tests", "Tests", "▣"],
     ["results", "Results", "▤"],
+    ["timetable", "Timetable & calendar", "◷"],
+    ["fees", "My fees", "$"],
   ],
 };
 
