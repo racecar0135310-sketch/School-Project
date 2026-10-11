@@ -20,6 +20,8 @@ const schoolSchema = new mongoose.Schema(
     adminPassword: { type: String, default: "", trim: true },
     adminUserId: { type: String, default: "", trim: true, lowercase: true },
     adminPasswordHash: { type: String, default: "" },
+    teacherLoginId: { type: String, default: "", trim: true, lowercase: true },
+    studentLoginId: { type: String, default: "", trim: true, lowercase: true },
     teacherPasswordHash: { type: String, default: "" },
     studentPasswordHash: { type: String, default: "" },
     colors: { type: mongoose.Schema.Types.Mixed, default: DEFAULT_COLORS },

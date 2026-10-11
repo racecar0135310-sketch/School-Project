@@ -89,6 +89,26 @@ async function verifyPassword(password, storedHash) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+async function loginIdIsInUse(userId, { schoolId, role, profileId, allowCurrentGeneral = false } = {}) {
+  const [schools, teachers, students] = await Promise.all([
+    School.find({ $or: [{ adminUserId: userId }, { teacherLoginId: userId }, { studentLoginId: userId }] })
+      .select("_id adminUserId teacherLoginId studentLoginId")
+      .lean(),
+    Teacher.find({ userId }).select("_id").lean(),
+    Student.find({ userId }).select("_id").lean(),
+  ]);
+
+  const schoolConflict = schools.some((school) => {
+    const isCurrentSchool = schoolId && String(school._id) === String(schoolId);
+    return school.adminUserId === userId ||
+      (school.teacherLoginId === userId && !(allowCurrentGeneral && isCurrentSchool && role === "teacher")) ||
+      (school.studentLoginId === userId && !(allowCurrentGeneral && isCurrentSchool && role === "student"));
+  });
+  const teacherConflict = teachers.some((teacher) => !(role === "teacher" && profileId && String(teacher._id) === String(profileId)));
+  const studentConflict = students.some((student) => !(role === "student" && profileId && String(student._id) === String(profileId)));
+  return schoolConflict || teacherConflict || studentConflict;
+}
+
 function signSession(payload) {
   const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })).toString("base64url");
   const signature = crypto.createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
@@ -130,12 +150,35 @@ app.post("/api/auth/login", async (req, res) => {
     const password = String(req.body.password || "");
     if (!userId || !password) return res.status(400).json({ error: "Enter your login ID and password." });
 
-    const school = await School.findOne({ adminUserId: userId });
-    if (!school) return res.status(401).json({ error: "Invalid login ID or password." });
-    let valid = await verifyPassword(password, school.adminPasswordHash);
-    // One-time compatibility for existing schools until their credentials are
-    // edited in the Dev Portal and saved as a modern login.
-    if (!valid && !school.adminPasswordHash && school.adminPassword) {
+    const [schools, teachers, students] = await Promise.all([
+      School.find({ $or: [{ adminUserId: userId }, { teacherLoginId: userId }, { studentLoginId: userId }] }),
+      Teacher.find({ userId, active: { $ne: false } }),
+      Student.find({ userId, active: { $ne: false } }),
+    ]);
+    const candidates = [];
+    for (const school of schools) {
+      if (school.adminUserId === userId) candidates.push({ role: "admin", school });
+      if (school.teacherLoginId === userId) candidates.push({ role: "teacher", school, general: true });
+      if (school.studentLoginId === userId) candidates.push({ role: "student", school, general: true });
+    }
+    for (const teacher of teachers) candidates.push({ role: "teacher", profile: teacher, schoolId: teacher.schoolId });
+    for (const student of students) candidates.push({ role: "student", profile: student, schoolId: student.schoolId });
+
+    if (candidates.length > 1) {
+      return res.status(409).json({ error: "This login ID matches more than one account. Ask your administrator to make the IDs unique." });
+    }
+    const account = candidates[0];
+    if (!account) return res.status(401).json({ error: "Invalid login ID or password." });
+
+    const school = account.school || await School.findById(account.schoolId);
+    if (!school) return res.status(401).json({ error: "This school's account is unavailable." });
+    const passwordHash = account.role === "admin"
+      ? school.adminPasswordHash
+      : account.role === "teacher" ? school.teacherPasswordHash : school.studentPasswordHash;
+    let valid = await verifyPassword(password, passwordHash);
+    // Existing schools may still have a plain-text admin password. Migrate it
+    // to a salted hash at the first successful central login.
+    if (account.role === "admin" && !valid && !school.adminPasswordHash && school.adminPassword) {
       valid = password === school.adminPassword;
       if (valid) {
         school.adminPasswordHash = await hashPassword(password);
@@ -146,10 +189,15 @@ app.post("/api/auth/login", async (req, res) => {
     if (!valid) return res.status(401).json({ error: "Invalid login ID or password." });
 
     const user = {
-      userId: school.adminUserId,
-      name: school.name,
-      role: "admin",
+      userId,
+      name: account.role === "admin" ? school.name : account.general
+        ? (account.role === "teacher" ? "General teacher account" : "General student account")
+        : account.profile.name || account.profile.inchargeName,
+      role: account.role,
       schoolId: String(school._id),
+      ...(account.general ? { generalAccount: true } : {}),
+      ...(account.role === "teacher" && account.profile ? { teacherId: String(account.profile._id) } : {}),
+      ...(account.role === "student" && account.profile ? { studentId: String(account.profile._id) } : {}),
     };
     res.json({
       token: signSession(user),
@@ -172,9 +220,21 @@ app.get("/api/me", requireAuth, async (req, res) => {
   try {
     const school = await School.findById(req.session.schoolId);
     if (!school) return res.status(401).json({ error: "This school account no longer exists." });
+    let name = school.name;
+    if (req.session.role === "teacher" && req.session.teacherId) {
+      const teacher = await Teacher.findOne({ _id: req.session.teacherId, schoolId: school._id, active: { $ne: false } });
+      if (!teacher) return res.status(401).json({ error: "This teacher account no longer exists." });
+      name = teacher.inchargeName;
+    } else if (req.session.role === "student" && req.session.studentId) {
+      const student = await Student.findOne({ _id: req.session.studentId, schoolId: school._id, active: { $ne: false } });
+      if (!student) return res.status(401).json({ error: "This student account no longer exists." });
+      name = student.name;
+    } else if (req.session.role !== "admin") {
+      name = req.session.role === "teacher" ? "General teacher account" : "General student account";
+    }
     res.json({
-      user: { userId: req.session.userId, name: school.name, role: "admin", schoolId: String(school._id) },
-      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors },
+      user: { userId: req.session.userId, name, role: req.session.role, schoolId: String(school._id), ...(req.session.generalAccount ? { generalAccount: true } : {}), ...(req.session.teacherId ? { teacherId: req.session.teacherId } : {}), ...(req.session.studentId ? { studentId: req.session.studentId } : {}) },
+      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
     });
   } catch (err) {
     res.status(500).json({ error: "Unable to load your account." });
@@ -416,7 +476,7 @@ app.get("/api/admin/summary", requireAuth, requireAdmin, async (req, res) => {
     ]);
     if (!school) return res.status(404).json({ error: "School not found." });
     res.json({
-      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors },
+      school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId },
       teachers,
       students,
       classes: classes.length,
@@ -446,9 +506,13 @@ app.post("/api/admin/teachers", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId, name, className, section, subjects } = req.body;
     if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Teacher ID and name are required." });
+    const normalizedUserId = userId.trim().toLowerCase();
+    if (await loginIdIsInUse(normalizedUserId, { schoolId: req.session.schoolId, role: "teacher" })) {
+      return res.status(409).json({ error: "That login ID is already in use. Choose a different specific teacher ID." });
+    }
     const teacher = await Teacher.create({
       schoolId: req.session.schoolId,
-      userId: userId.trim().toLowerCase(),
+      userId: normalizedUserId,
       inchargeName: name.trim(),
       className: (className || "").trim(),
       section: (section || "").trim(),
@@ -465,9 +529,13 @@ app.put("/api/admin/teachers/:id", requireAuth, requireAdmin, async (req, res) =
   try {
     const { userId, name, className, section, subjects } = req.body;
     if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Teacher ID and name are required." });
+    const normalizedUserId = userId.trim().toLowerCase();
+    if (await loginIdIsInUse(normalizedUserId, { schoolId: req.session.schoolId, role: "teacher", profileId: req.params.id })) {
+      return res.status(409).json({ error: "That login ID is already in use. Choose a different specific teacher ID." });
+    }
     const teacher = await Teacher.findOneAndUpdate(
       { _id: req.params.id, schoolId: req.session.schoolId },
-      { userId: userId.trim().toLowerCase(), inchargeName: name.trim(), className: (className || "").trim(), section: (section || "").trim(), subjects: Array.isArray(subjects) ? subjects : [] },
+      { userId: normalizedUserId, inchargeName: name.trim(), className: (className || "").trim(), section: (section || "").trim(), subjects: Array.isArray(subjects) ? subjects : [] },
       { new: true, runValidators: true }
     );
     if (!teacher) return res.status(404).json({ error: "Teacher not found." });
@@ -501,9 +569,13 @@ app.post("/api/admin/students", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId, name, className, section, rollNumber, parentName, parentPhone } = req.body;
     if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Student ID and name are required." });
+    const normalizedUserId = userId.trim().toLowerCase();
+    if (await loginIdIsInUse(normalizedUserId, { schoolId: req.session.schoolId, role: "student" })) {
+      return res.status(409).json({ error: "That login ID is already in use. Choose a different specific student ID." });
+    }
     const student = await Student.create({
       schoolId: req.session.schoolId,
-      userId: userId.trim().toLowerCase(),
+      userId: normalizedUserId,
       name: name.trim(),
       className: (className || "").trim(),
       section: (section || "").trim(),
@@ -522,9 +594,13 @@ app.put("/api/admin/students/:id", requireAuth, requireAdmin, async (req, res) =
   try {
     const { userId, name, className, section, rollNumber, parentName, parentPhone } = req.body;
     if (!userId?.trim() || !name?.trim()) return res.status(400).json({ error: "Student ID and name are required." });
+    const normalizedUserId = userId.trim().toLowerCase();
+    if (await loginIdIsInUse(normalizedUserId, { schoolId: req.session.schoolId, role: "student", profileId: req.params.id })) {
+      return res.status(409).json({ error: "That login ID is already in use. Choose a different specific student ID." });
+    }
     const student = await Student.findOneAndUpdate(
       { _id: req.params.id, schoolId: req.session.schoolId },
-      { userId: userId.trim().toLowerCase(), name: name.trim(), className: (className || "").trim(), section: (section || "").trim(), rollNumber: (rollNumber || "").trim(), parentName: (parentName || "").trim(), parentPhone: (parentPhone || "").trim() },
+      { userId: normalizedUserId, name: name.trim(), className: (className || "").trim(), section: (section || "").trim(), rollNumber: (rollNumber || "").trim(), parentName: (parentName || "").trim(), parentPhone: (parentPhone || "").trim() },
       { new: true, runValidators: true }
     );
     if (!student) return res.status(404).json({ error: "Student not found." });
@@ -548,17 +624,33 @@ app.delete("/api/admin/students/:id", requireAuth, requireAdmin, async (req, res
 app.put("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
   try {
     const { name, address, phone, colors, teacherPassword, studentPassword } = req.body;
+    const schoolId = req.session.schoolId;
+    const currentSchool = await School.findById(schoolId);
+    if (!currentSchool) return res.status(404).json({ error: "School not found." });
+    const teacherLoginId = String(req.body.teacherLoginId ?? currentSchool.teacherLoginId ?? "").trim().toLowerCase();
+    const studentLoginId = String(req.body.studentLoginId ?? currentSchool.studentLoginId ?? "").trim().toLowerCase();
+    if (teacherLoginId && studentLoginId && teacherLoginId === studentLoginId) {
+      return res.status(400).json({ error: "Teacher and student general login IDs must be different." });
+    }
+    if (teacherLoginId && await loginIdIsInUse(teacherLoginId, { schoolId, role: "teacher", allowCurrentGeneral: true })) {
+      return res.status(409).json({ error: "The teacher general login ID is already assigned to another account." });
+    }
+    if (studentLoginId && await loginIdIsInUse(studentLoginId, { schoolId, role: "student", allowCurrentGeneral: true })) {
+      return res.status(409).json({ error: "The student general login ID is already assigned to another account." });
+    }
     const updates = {
       name: (name || "").trim(),
       address: (address || "").trim(),
       phone: (phone || "").trim(),
+      teacherLoginId,
+      studentLoginId,
       ...(colors && typeof colors === "object" ? { colors } : {}),
       ...(teacherPassword ? { teacherPasswordHash: await hashPassword(teacherPassword) } : {}),
       ...(studentPassword ? { studentPasswordHash: await hashPassword(studentPassword) } : {}),
     };
-    const school = await School.findByIdAndUpdate(req.session.schoolId, updates, { new: true, runValidators: true });
+    const school = await School.findByIdAndUpdate(schoolId, updates, { new: true, runValidators: true });
     if (!school) return res.status(404).json({ error: "School not found." });
-    res.json({ school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors } });
+    res.json({ school: { id: String(school._id), name: school.name, address: school.address, phone: school.phone, colors: school.colors, teacherLoginId: school.teacherLoginId, studentLoginId: school.studentLoginId } });
   } catch (err) {
     res.status(500).json({ error: "Unable to save school settings." });
   }
